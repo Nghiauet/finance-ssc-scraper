@@ -1,0 +1,19 @@
+FROM python:3.13-slim
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+WORKDIR /app
+
+COPY pyproject.toml uv.lock README.md ./
+COPY scrape_ssc/ scrape_ssc/
+COPY scrape_financial_reports.py main.py ./
+COPY app/ app/
+
+RUN uv sync --frozen --no-dev
+
+# Playwright + Chromium for in-process scraping
+RUN uv run playwright install --with-deps chromium
+
+EXPOSE 8000
+
+CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

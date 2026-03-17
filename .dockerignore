@@ -1,0 +1,11 @@
+.venv/
+.git/
+.claude/
+__pycache__/
+*.py[oc]
+*.egg-info/
+build/
+dist/
+sample_data/
+financial_reports_data*/
+output/

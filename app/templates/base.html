@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-gray-50">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}{{ page_title | default("SSC Manager") }}{% endblock %} - SSC Finance</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: { 50:'#eef2ff',100:'#e0e7ff',200:'#c7d2fe',300:'#a5b4fc',400:'#818cf8',500:'#6366f1',600:'#4f46e5',700:'#4338ca',800:'#3730a3',900:'#312e81' }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    [x-cloak] { display: none !important; }
+    .htmx-indicator { display: none; }
+    .htmx-request .htmx-indicator { display: inline-block; }
+    .htmx-request.htmx-indicator { display: inline-block; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+    .fade-in { animation: fadeIn 0.2s ease-out; }
+  </style>
+</head>
+<body class="h-full">
+  <div class="min-h-full">
+    {% include "components/_navbar.html" %}
+
+    <main class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
+      <!-- Toast area -->
+      <div id="toast-area" class="fixed top-4 right-4 z-50 space-y-2"></div>
+
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+
+  {% block modal %}{% endblock %}
+
+  <script>
+    // Auto-dismiss toasts
+    document.body.addEventListener('htmx:afterSwap', function(e) {
+      if (e.detail.target.id === 'toast-area') {
+        setTimeout(() => { e.detail.target.innerHTML = ''; }, 3000);
+      }
+    });
+
+    // Close modal
+    function closeModal() {
+      document.getElementById('modal-backdrop')?.remove();
+    }
+
+    // Confirm delete
+    function confirmDelete(url) {
+      if (confirm('Are you sure you want to delete this?')) {
+        fetch(url, { method: 'DELETE' }).then(r => {
+          if (r.ok) window.location.reload();
+          else alert('Delete failed');
+        });
+      }
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,100 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: scrape_ssc
+      POSTGRES_USER: scrape_ssc
+      POSTGRES_PASSWORD: scrape_ssc_secret
+    # No host port — internal only
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scrape_ssc"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ssc-network
+
+  minio:
+    image: minio/minio
+    command: server --console-address ":9001" /data
+    environment:
+      MINIO_ROOT_USER: ssc-admin
+      MINIO_ROOT_PASSWORD: ssc-secret-key
+    # No host port — internal only (use debug profile for console)
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ssc-network
+
+  # MinIO console — only with: docker compose --profile debug up
+  minio-console:
+    image: minio/minio
+    entrypoint: ["sh", "-c", "echo 'MinIO console available at http://localhost:9003' && sleep infinity"]
+    profiles: ["debug"]
+    ports:
+      - "9003:9001"
+    network_mode: "service:minio"
+
+  minio-init:
+    image: minio/mc
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set ssc http://minio:9000 ssc-admin ssc-secret-key;
+      mc mb --ignore-existing ssc/ssc-reports;
+      exit 0;
+      "
+    networks:
+      - ssc-network
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    environment:
+      DATABASE_URL: postgresql+psycopg2://scrape_ssc:scrape_ssc_secret@postgres:5432/scrape_ssc
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ssc-admin
+      MINIO_SECRET_KEY: ssc-secret-key
+      MINIO_BUCKET: ssc-reports
+      MINIO_SECURE: "false"
+      BASIC_AUTH_USERNAME: ${BASIC_AUTH_USERNAME}
+      BASIC_AUTH_PASSWORD: ${BASIC_AUTH_PASSWORD}
+      BASIC_AUTH_REALM: ${BASIC_AUTH_REALM:-SSC Finance}
+    ports:
+      - "8030:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - ssc-network
+
+  # CLI scraper — only with: docker compose run --profile cli scraper --ticker VNM
+  scraper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ./output:/app/output
+    profiles: ["cli"]
+    networks:
+      - ssc-network
+
+volumes:
+  pgdata:
+  minio_data:
+
+networks:
+  ssc-network:
+    driver: bridge
