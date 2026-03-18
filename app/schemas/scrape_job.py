@@ -7,7 +7,7 @@ class ScrapeJobCreate(BaseModel):
     from_date: str | None = None
     to_date: str | None = None
     max_pages: int | None = None
-    download_files: bool = False
+    download_files: bool = True
 
 
 class ScrapeJobResponse(BaseModel):

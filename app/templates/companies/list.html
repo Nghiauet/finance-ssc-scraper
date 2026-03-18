@@ -20,7 +20,7 @@
     </div>
     <button type="submit" class="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors">Search</button>
     {% if search %}
-    <a href="/companies" class="px-4 py-2 text-sm font-medium text-gray-700 bg-white rounded-lg ring-1 ring-gray-300 hover:bg-gray-50 transition-colors">Clear</a>
+    <a href="{{ app_path(request, '/companies') }}" class="px-4 py-2 text-sm font-medium text-gray-700 bg-white rounded-lg ring-1 ring-gray-300 hover:bg-gray-50 transition-colors">Clear</a>
     {% endif %}
   </form>
 </div>
@@ -40,7 +40,7 @@
     </thead>
     <tbody class="divide-y divide-gray-100">
       {% for item in company_data %}
-      <tr class="hover:bg-gray-50 transition-colors cursor-pointer" onclick="window.location='/companies/{{ item.company.id }}'">
+      <tr class="hover:bg-gray-50 transition-colors cursor-pointer" onclick="window.location='{{ app_path(request, '/companies/' ~ item.company.id) }}'">
         <td class="px-6 py-4 whitespace-nowrap">
           <span class="text-sm font-bold text-primary-600">{{ item.company.symbol }}</span>
         </td>

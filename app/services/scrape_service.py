@@ -14,6 +14,10 @@ from app.schemas.scrape_job import ScrapeJobCreate
 from app.services.minio_service import minio_service
 
 
+def normalize_report_name(report_name: str | None) -> str:
+    return " ".join((report_name or "").split()).casefold()
+
+
 def parse_report_classification(report_name: str) -> tuple[str | None, str | None]:
     """Parse report type and period from Vietnamese report name."""
     name = report_name.lower()
@@ -175,23 +179,33 @@ class ScrapeService:
             year, quarter = parse_year_quarter(report.get("summary", ""))
             sub_date = parse_date(report.get("submission_date", ""))
 
-            doc = Document(
-                company_id=company.id,
-                scrape_job_id=job.id,
+            doc = self._find_existing_document(
+                db,
                 ticker=ticker,
-                exchange=report.get("exchange"),
                 report_name=report.get("report_name", ""),
-                company_name=report.get("company"),
-                summary=report.get("summary"),
                 submission_date=sub_date,
-                ssc_download_url=report.get("download_url"),
-                report_type=report_type,
-                report_period=report_period,
-                year=year,
-                quarter=quarter,
             )
-            db.add(doc)
-            db.flush()
+            if not doc:
+                doc = Document(
+                    ticker=ticker,
+                    report_name=report.get("report_name", ""),
+                    submission_date=sub_date,
+                )
+                db.add(doc)
+                db.flush()
+
+            doc.company_id = company.id
+            doc.scrape_job_id = job.id
+            doc.exchange = report.get("exchange")
+            doc.report_name = report.get("report_name", "")
+            doc.company_name = report.get("company")
+            doc.summary = report.get("summary")
+            doc.submission_date = sub_date
+            doc.ssc_download_url = report.get("download_url")
+            doc.report_type = report_type
+            doc.report_period = report_period
+            doc.year = year
+            doc.quarter = quarter
 
             # Link downloaded file if available
             dl_key = f"{ticker}|{report.get('report_name', '')}"
@@ -199,28 +213,75 @@ class ScrapeService:
             if dl_info and dl_info.get("file"):
                 file_path = dl_info["file"]
                 try:
-                    filename = Path(file_path).name
-                    object_name = f"{ticker}/{filename}"
-                    content_type = minio_service.get_content_type(filename)
-                    file_size = os.path.getsize(file_path)
-
-                    minio_service.upload_file(object_name, file_path, content_type)
-
-                    file_rec = File(
-                        name=filename,
-                        path=object_name,
-                        bucket=minio_service.bucket,
-                        content_type=content_type,
-                        size_bytes=file_size,
-                    )
-                    db.add(file_rec)
-                    db.flush()
-
-                    doc.file_id = file_rec.id
+                    self._upsert_document_file(db, doc, ticker, file_path)
                 except FileNotFoundError:
                     pass
 
         db.commit()
+
+    def _find_existing_document(
+        self,
+        db: Session,
+        *,
+        ticker: str,
+        report_name: str,
+        submission_date,
+    ) -> Document | None:
+        normalized_name = normalize_report_name(report_name)
+
+        query = db.query(Document).filter(Document.ticker == ticker)
+        if submission_date is not None:
+            query = query.filter(Document.submission_date == submission_date)
+
+        candidates = query.order_by(Document.created_at.asc()).all()
+        if submission_date is None and not candidates:
+            candidates = (
+                db.query(Document)
+                .filter(Document.ticker == ticker)
+                .order_by(Document.created_at.asc())
+                .all()
+            )
+
+        for doc in candidates:
+            if normalize_report_name(doc.report_name) == normalized_name:
+                return doc
+        return None
+
+    def _upsert_document_file(self, db: Session, doc: Document, ticker: str, file_path: str) -> None:
+        filename = Path(file_path).name
+        object_name = f"{ticker}/{filename}"
+        content_type = minio_service.get_content_type(filename)
+        file_size = os.path.getsize(file_path)
+
+        minio_service.upload_file(object_name, file_path, content_type)
+
+        file_rec = db.query(File).get(doc.file_id) if doc.file_id else None
+        if not file_rec:
+            file_rec = File(
+                name=filename,
+                path=object_name,
+                bucket=minio_service.bucket,
+                content_type=content_type,
+                size_bytes=file_size,
+            )
+            db.add(file_rec)
+            db.flush()
+            doc.file_id = file_rec.id
+            return
+
+        old_path = file_rec.path
+        old_bucket = file_rec.bucket
+        file_rec.name = filename
+        file_rec.path = object_name
+        file_rec.bucket = minio_service.bucket
+        file_rec.content_type = content_type
+        file_rec.size_bytes = file_size
+
+        if old_path != object_name or old_bucket != minio_service.bucket:
+            try:
+                minio_service.client.remove_object(old_bucket, old_path)
+            except Exception:
+                pass
 
     def cleanup_orphans(self, db: Session):
         """Mark any 'running' jobs as failed on startup."""

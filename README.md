@@ -32,11 +32,14 @@ MINIO_SECURE=false
 BASIC_AUTH_USERNAME=admin
 BASIC_AUTH_PASSWORD=change-this-password
 BASIC_AUTH_REALM=SSC Finance
+ROOT_PATH=
 MAX_CONCURRENT_SCRAPES=1
 SCRAPE_HEADLESS=true
 ```
 
 Local credentials are defined in `.env`. Rotate them before using this outside local development.
+
+If you publish the app behind an Nginx subpath such as `/ssc-portal`, set `ROOT_PATH=/ssc-portal` so the UI, API links, `/docs`, and `openapi.json` are generated with that prefix.
 
 ## Local development
 
@@ -69,7 +72,7 @@ docker compose up -d --build
 
 The API is exposed on `http://localhost:8030`.
 
-Docker Compose forwards `BASIC_AUTH_USERNAME`, `BASIC_AUTH_PASSWORD`, and `BASIC_AUTH_REALM` into the container, so keep them in the project `.env`.
+Docker Compose forwards `BASIC_AUTH_USERNAME`, `BASIC_AUTH_PASSWORD`, `BASIC_AUTH_REALM`, and `ROOT_PATH` into the container, so keep them in the project `.env`.
 
 ## Document viewing
 

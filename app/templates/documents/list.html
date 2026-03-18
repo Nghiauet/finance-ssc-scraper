@@ -6,7 +6,7 @@
     <h1 class="text-2xl font-bold text-gray-900">Documents</h1>
     <p class="mt-1 text-sm text-gray-500">{{ total }} financial reports</p>
   </div>
-  <a href="/api/documents/export{% if ticker %}?ticker={{ ticker }}{% endif %}" class="inline-flex items-center px-3 py-1.5 text-sm font-medium text-gray-700 bg-white rounded-lg ring-1 ring-gray-300 hover:bg-gray-50 transition-colors">
+  <a href="{{ app_path(request, '/api/documents/export' ~ ('?ticker=' ~ ticker if ticker else '')) }}" class="inline-flex items-center px-3 py-1.5 text-sm font-medium text-gray-700 bg-white rounded-lg ring-1 ring-gray-300 hover:bg-gray-50 transition-colors">
     <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
     </svg>
@@ -61,7 +61,7 @@
     </div>
     <div class="flex items-end space-x-2">
       <button type="submit" class="flex-1 px-3 py-1.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors">Filter</button>
-      <a href="/documents" class="px-3 py-1.5 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors">Clear</a>
+      <a href="{{ app_path(request, '/documents') }}" class="px-3 py-1.5 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors">Clear</a>
     </div>
   </div>
 </form>
@@ -84,7 +84,7 @@
       {% for doc in documents %}
       <tr class="hover:bg-gray-50 transition-colors">
         <td class="px-6 py-4 whitespace-nowrap">
-          <a href="/documents?ticker={{ doc.ticker }}" class="text-sm font-bold text-primary-600 hover:text-primary-700">{{ doc.ticker }}</a>
+          <a href="{{ app_path(request, '/documents?ticker=' ~ doc.ticker) }}" class="text-sm font-bold text-primary-600 hover:text-primary-700">{{ doc.ticker }}</a>
           {% if doc.exchange %}
           <span class="ml-1 text-xs text-gray-400">{{ doc.exchange }}</span>
           {% endif %}
@@ -92,7 +92,7 @@
         <td class="px-6 py-4">
           <div class="max-w-xs truncate">
             {% if doc.file_id %}
-            <a href="/documents/{{ doc.id }}" class="text-sm font-medium text-gray-900 hover:text-primary-700">{{ doc.report_name }}</a>
+            <a href="{{ app_path(request, '/documents/' ~ doc.id) }}" class="text-sm font-medium text-gray-900 hover:text-primary-700">{{ doc.report_name }}</a>
             {% else %}
             <div class="text-sm text-gray-900">{{ doc.report_name }}</div>
             {% endif %}
@@ -123,13 +123,13 @@
         </td>
         <td class="px-6 py-4 text-right whitespace-nowrap space-x-2">
           {% if doc.file_id %}
-          <a href="/documents/{{ doc.id }}" class="inline-flex items-center text-primary-600 hover:text-primary-700 text-sm" title="View">
+          <a href="{{ app_path(request, '/documents/' ~ doc.id) }}" class="inline-flex items-center text-primary-600 hover:text-primary-700 text-sm" title="View">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
             </svg>
           </a>
-          <a href="/api/documents/{{ doc.id }}/download" class="inline-flex items-center text-gray-500 hover:text-gray-700 text-sm" title="Download">
+          <a href="{{ app_path(request, '/api/documents/' ~ doc.id ~ '/download') }}" class="inline-flex items-center text-gray-500 hover:text-gray-700 text-sm" title="Download">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
             </svg>

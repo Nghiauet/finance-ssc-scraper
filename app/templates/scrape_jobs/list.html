@@ -1,6 +1,8 @@
 {% extends "base.html" %}
 
 {% block content %}
+{% set prefill_ticker = request.query_params.get('prefill_ticker', '') %}
+{% set prefill_max_pages = request.query_params.get('prefill_max_pages', '0' if prefill_ticker else '5') %}
 <div class="flex items-center justify-between mb-6">
   <div>
     <h1 class="text-2xl font-bold text-gray-900">Scrape Jobs</h1>
@@ -19,7 +21,7 @@
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">Ticker (optional)</label>
             <input type="text" name="ticker" id="ticker-input" placeholder="e.g. VNM, FPT"
-              value="{{ request.query_params.get('prefill_ticker', '') }}"
+              value="{{ prefill_ticker }}"
               class="block w-full rounded-lg border-0 py-2 px-3 text-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-primary-500">
             <p class="mt-1 text-xs text-gray-400">Leave empty for all companies</p>
           </div>
@@ -39,13 +41,19 @@
 
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">Max Pages</label>
-            <input type="number" name="max_pages" value="5" min="0"
+            <input type="number" name="max_pages" value="{{ prefill_max_pages }}" min="0"
               class="block w-full rounded-lg border-0 py-2 px-3 text-sm ring-1 ring-inset ring-gray-300 focus:ring-2 focus:ring-primary-500">
-            <p class="mt-1 text-xs text-gray-400">0 = all pages</p>
+            <p class="mt-1 text-xs text-gray-400">
+              {% if prefill_ticker %}
+              Defaulting to 0 so ticker-specific scrapes collect all available pages.
+              {% else %}
+              0 = all pages
+              {% endif %}
+            </p>
           </div>
 
           <div class="flex items-center">
-            <input type="checkbox" name="download_files" id="download-files"
+            <input type="checkbox" name="download_files" id="download-files" checked
               class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500">
             <label for="download-files" class="ml-2 text-sm text-gray-700">Download PDF/XLS files</label>
           </div>
@@ -63,7 +71,7 @@
   </div>
 
   <!-- Jobs List -->
-  <div class="lg:col-span-2" id="jobs-list" {% if has_running %}hx-get="/scrape-jobs" hx-trigger="every 5s" hx-select="#jobs-table" hx-target="#jobs-table" hx-swap="outerHTML"{% endif %}>
+  <div class="lg:col-span-2" id="jobs-list" {% if has_running %}hx-get="{{ app_path(request, '/scrape-jobs') }}" hx-trigger="every 5s" hx-select="#jobs-table" hx-target="#jobs-table" hx-swap="outerHTML"{% endif %}>
     <div class="bg-white rounded-xl shadow-sm ring-1 ring-gray-900/5 overflow-hidden" id="jobs-table">
       {% if jobs %}
       <table class="min-w-full divide-y divide-gray-200">
@@ -100,8 +108,9 @@
               </span>
               {% elif job.status == 'running' %}
               <span class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium bg-yellow-50 text-yellow-800 ring-1 ring-inset ring-yellow-600/20">
-                <svg class="w-3 h-3 mr-1 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9"/>
+                <svg class="w-3 h-3 mr-1 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <circle class="opacity-25" cx="12" cy="12" r="9" stroke="currentColor" stroke-width="3"></circle>
+                  <path class="opacity-90" fill="currentColor" d="M12 3a9 9 0 0 1 9 9h-3a6 6 0 0 0-6-6V3z"></path>
                 </svg>
                 Running
               </span>
@@ -168,7 +177,7 @@ async function startScrape(e) {
   const form = e.target;
   const btn = document.getElementById('submit-btn');
   btn.disabled = true;
-  btn.innerHTML = '<svg class="w-4 h-4 mr-2 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9"/></svg> Starting...';
+  btn.innerHTML = '<svg class="w-4 h-4 mr-2 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="9" stroke="currentColor" stroke-width="3"></circle><path class="opacity-90" fill="currentColor" d="M12 3a9 9 0 0 1 9 9h-3a6 6 0 0 0-6-6V3z"></path></svg> Starting...';
 
   const data = {
     ticker: form.ticker.value || null,
@@ -179,7 +188,7 @@ async function startScrape(e) {
   };
 
   try {
-    const res = await fetch('/api/scrape-jobs', {
+    const res = await fetch(appUrl('/api/scrape-jobs'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),

@@ -15,9 +15,11 @@ This project scrapes financial reports from `congbothongtin.ssc.gov.vn` and expo
 - Read [`CLAUDE.md`](/home/nghiaph/nghiaph_workspace/finance-chatbot/scrape-ssc/CLAUDE.md) first for project context and common commands.
 - Prefer small, maintainable changes over wide refactors.
 - Keep document-serving logic centralized. Reuse `app/services/file_stream.py` for inline/download responses.
+- Do not add real or live-looking secrets to tracked files. `.env.example`, `README.md`, and committed config should use placeholders or clearly local-only sample values.
 - Keep authentication centralized. Reuse `app/auth.py` and `.env` settings instead of route-by-route auth checks.
 - Treat `/docs` and `/openapi.json` as first-class supported endpoints.
 - Preserve the current UI pattern: document clicks should open the internal viewer page and downloads should stay explicit.
+- Avoid direct MinIO exposure in user-facing flows. Prefer app-proxied `/content` and `/download` routes over presigned URLs unless the task explicitly requires external object-store links.
 
 ## Key paths
 
@@ -38,13 +40,15 @@ The application expects `.env` values for:
 - `BASIC_AUTH_REALM`
 
 If auth credentials are missing, the app intentionally fails at startup.
+Keep `.env.example` safe to commit: placeholders for auth credentials, and only obviously local development values for container/database examples.
 
 ## Implementation notes
 
 - Inline viewing currently targets PDFs via the browser's built-in PDF renderer.
 - Keep `/api/documents/{id}/content` separate from `/api/documents/{id}/download`.
+- When deleting or proxying files, respect the `File.bucket` value instead of assuming the default MinIO bucket.
 - If you add more previewable types later, extend `file_supports_inline_view()` in [`app/services/file_stream.py`](/home/nghiaph/nghiaph_workspace/finance-chatbot/scrape-ssc/app/services/file_stream.py).
-- If you change environment variables, update both `.env.example` and [`README.md`](/home/nghiaph/nghiaph_workspace/finance-chatbot/scrape-ssc/README.md).
+- If you change environment variables, update `.env.example`, [`README.md`](/home/nghiaph/nghiaph_workspace/finance-chatbot/scrape-ssc/README.md), and any affected Docker environment wiring.
 
 ## Validation
 

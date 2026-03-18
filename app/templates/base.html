@@ -41,6 +41,15 @@
   {% block modal %}{% endblock %}
 
   <script>
+    window.APP_ROOT = {{ request.scope.get('root_path', '') | tojson }};
+
+    function appUrl(path) {
+      if (!path) return window.APP_ROOT || '/';
+      if (/^(?:[a-z]+:)?\/\//i.test(path)) return path;
+      if (!path.startsWith('/')) return `${window.APP_ROOT || ''}/${path}`;
+      return `${window.APP_ROOT || ''}${path}` || '/';
+    }
+
     // Auto-dismiss toasts
     document.body.addEventListener('htmx:afterSwap', function(e) {
       if (e.detail.target.id === 'toast-area') {
@@ -56,7 +65,7 @@
     // Confirm delete
     function confirmDelete(url) {
       if (confirm('Are you sure you want to delete this?')) {
-        fetch(url, { method: 'DELETE' }).then(r => {
+        fetch(appUrl(url), { method: 'DELETE' }).then(r => {
           if (r.ok) window.location.reload();
           else alert('Delete failed');
         });

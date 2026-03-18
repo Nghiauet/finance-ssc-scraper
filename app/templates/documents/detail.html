@@ -2,7 +2,7 @@
 
 {% block content %}
 <nav class="mb-6 flex items-center text-sm text-gray-500">
-  <a href="/documents" class="hover:text-gray-700">Documents</a>
+  <a href="{{ app_path(request, '/documents') }}" class="hover:text-gray-700">Documents</a>
   <svg class="mx-2 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
   </svg>
@@ -15,7 +15,7 @@
       <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <div class="flex items-center gap-2 text-sm text-gray-500">
-            <a href="/documents?ticker={{ document.ticker }}" class="font-semibold text-primary-600 hover:text-primary-700">{{ document.ticker }}</a>
+            <a href="{{ app_path(request, '/documents?ticker=' ~ document.ticker) }}" class="font-semibold text-primary-600 hover:text-primary-700">{{ document.ticker }}</a>
             {% if document.exchange %}
             <span>{{ document.exchange }}</span>
             {% endif %}
@@ -41,10 +41,10 @@
         </div>
         <div class="flex flex-wrap gap-2">
           {% if file %}
-          <a href="/api/documents/{{ document.id }}/download" class="inline-flex items-center rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 transition-colors">
+          <a href="{{ app_path(request, '/api/documents/' ~ document.id ~ '/download') }}" class="inline-flex items-center rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 transition-colors">
             Download
           </a>
-          <a href="/api/documents/{{ document.id }}/content" target="_blank" rel="noreferrer" class="inline-flex items-center rounded-lg bg-white px-4 py-2 text-sm font-medium text-gray-700 ring-1 ring-gray-300 hover:bg-gray-50 transition-colors">
+          <a href="{{ app_path(request, '/api/documents/' ~ document.id ~ '/content') }}" target="_blank" rel="noreferrer" class="inline-flex items-center rounded-lg bg-white px-4 py-2 text-sm font-medium text-gray-700 ring-1 ring-gray-300 hover:bg-gray-50 transition-colors">
             Open raw file
           </a>
           {% endif %}
@@ -71,24 +71,24 @@
         </div>
         <div class="flex items-center gap-2">
           {% if newer_document %}
-          <a href="/documents/{{ newer_document.id }}" class="rounded-lg bg-white px-3 py-1.5 text-sm font-medium text-gray-700 ring-1 ring-gray-300 hover:bg-gray-50 transition-colors">Newer</a>
+          <a href="{{ app_path(request, '/documents/' ~ newer_document.id) }}" class="rounded-lg bg-white px-3 py-1.5 text-sm font-medium text-gray-700 ring-1 ring-gray-300 hover:bg-gray-50 transition-colors">Newer</a>
           {% endif %}
           {% if older_document %}
-          <a href="/documents/{{ older_document.id }}" class="rounded-lg bg-white px-3 py-1.5 text-sm font-medium text-gray-700 ring-1 ring-gray-300 hover:bg-gray-50 transition-colors">Older</a>
+          <a href="{{ app_path(request, '/documents/' ~ older_document.id) }}" class="rounded-lg bg-white px-3 py-1.5 text-sm font-medium text-gray-700 ring-1 ring-gray-300 hover:bg-gray-50 transition-colors">Older</a>
           {% endif %}
         </div>
       </div>
 
       {% if can_preview_inline %}
       <iframe
-        src="/api/documents/{{ document.id }}/content"
+        src="{{ app_path(request, '/api/documents/' ~ document.id ~ '/content') }}"
         class="h-[75vh] w-full bg-gray-100"
         title="{{ document.report_name }}">
       </iframe>
       {% elif file %}
       <div class="px-6 py-16 text-center">
         <p class="text-sm text-gray-600">Inline preview is currently limited to PDF files.</p>
-        <a href="/api/documents/{{ document.id }}/download" class="mt-4 inline-flex items-center rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 transition-colors">
+        <a href="{{ app_path(request, '/api/documents/' ~ document.id ~ '/download') }}" class="mt-4 inline-flex items-center rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 transition-colors">
           Download {{ file.name }}
         </a>
       </div>
@@ -107,7 +107,7 @@
     </div>
     <div class="max-h-[75vh] overflow-y-auto divide-y divide-gray-100">
       {% for related in related_documents %}
-      <a href="/documents/{{ related.id }}" class="block px-5 py-4 transition-colors {% if related.id == document.id %}bg-primary-50{% else %}hover:bg-gray-50{% endif %}">
+      <a href="{{ app_path(request, '/documents/' ~ related.id) }}" class="block px-5 py-4 transition-colors {% if related.id == document.id %}bg-primary-50{% else %}hover:bg-gray-50{% endif %}">
         <div class="flex items-start justify-between gap-3">
           <div class="min-w-0">
             <p class="truncate text-sm font-medium {% if related.id == document.id %}text-primary-700{% else %}text-gray-900{% endif %}">

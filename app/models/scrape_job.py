@@ -14,7 +14,7 @@ class ScrapeJob(Base):
     from_date: Mapped[str | None] = mapped_column(String(20))
     to_date: Mapped[str | None] = mapped_column(String(20))
     max_pages: Mapped[int | None] = mapped_column(Integer)
-    download_files: Mapped[bool] = mapped_column(Boolean, default=False)
+    download_files: Mapped[bool] = mapped_column(Boolean, default=True)
 
     total_reports_found: Mapped[int] = mapped_column(Integer, default=0)
     total_files_downloaded: Mapped[int] = mapped_column(Integer, default=0)

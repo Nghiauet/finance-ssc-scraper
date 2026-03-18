@@ -17,6 +17,25 @@ from app.services.minio_service import minio_service
 from app.services.scrape_service import scrape_service
 
 
+def normalize_root_path(value: str) -> str:
+    value = (value or "").strip()
+    if not value or value == "/":
+        return ""
+    return f"/{value.strip('/')}"
+
+
+APP_ROOT_PATH = normalize_root_path(settings.root_path)
+
+
+def app_path(request: Request, path: str = "/") -> str:
+    root_path = request.scope.get("root_path") or APP_ROOT_PATH
+    if not path or path == "/":
+        return root_path or "/"
+    if not path.startswith("/"):
+        path = f"/{path}"
+    return f"{root_path}{path}" if root_path else path
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
@@ -35,6 +54,7 @@ app = FastAPI(
     lifespan=lifespan,
     docs_url="/docs",
     openapi_url="/openapi.json",
+    root_path=APP_ROOT_PATH,
 )
 
 app.add_middleware(
@@ -54,6 +74,7 @@ app.add_middleware(
 app.include_router(api_router)
 
 templates = Jinja2Templates(directory="app/templates")
+templates.env.globals["app_path"] = app_path
 
 
 # --- Health ---

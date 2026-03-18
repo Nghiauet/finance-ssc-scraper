@@ -3,7 +3,7 @@
 {% block content %}
 <!-- Breadcrumb -->
 <nav class="mb-6 flex items-center text-sm text-gray-500">
-  <a href="/companies" class="hover:text-gray-700">Companies</a>
+  <a href="{{ app_path(request, '/companies') }}" class="hover:text-gray-700">Companies</a>
   <svg class="mx-2 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
   <span class="text-gray-900 font-medium">{{ company.symbol }}</span>
 </nav>
@@ -28,7 +28,7 @@
       <p class="mt-1 text-xs text-gray-400">Added {{ company.created_at.strftime("%d/%m/%Y") }}</p>
     </div>
     <div class="flex space-x-2">
-      <a href="/scrape-jobs?prefill_ticker={{ company.symbol }}" class="inline-flex items-center px-3 py-1.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors">
+      <a href="{{ app_path(request, '/scrape-jobs?prefill_ticker=' ~ company.symbol ~ '&prefill_max_pages=0') }}" class="inline-flex items-center px-3 py-1.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors">
         <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
         </svg>
@@ -61,7 +61,7 @@
         <td class="px-6 py-4">
           <div>
             {% if doc.file_id %}
-            <a href="/documents/{{ doc.id }}" class="text-sm font-medium text-gray-900 hover:text-primary-700">{{ doc.report_name }}</a>
+            <a href="{{ app_path(request, '/documents/' ~ doc.id) }}" class="text-sm font-medium text-gray-900 hover:text-primary-700">{{ doc.report_name }}</a>
             {% else %}
             <div class="text-sm text-gray-900">{{ doc.report_name }}</div>
             {% endif %}
@@ -90,14 +90,14 @@
         <td class="px-6 py-4 text-right whitespace-nowrap">
           {% if doc.file_id %}
           <div class="inline-flex items-center gap-3">
-            <a href="/documents/{{ doc.id }}" class="inline-flex items-center text-primary-600 hover:text-primary-700 text-sm">
+            <a href="{{ app_path(request, '/documents/' ~ doc.id) }}" class="inline-flex items-center text-primary-600 hover:text-primary-700 text-sm">
               <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
               </svg>
               View
             </a>
-            <a href="/api/documents/{{ doc.id }}/download" class="inline-flex items-center text-gray-500 hover:text-gray-700 text-sm">
+            <a href="{{ app_path(request, '/api/documents/' ~ doc.id ~ '/download') }}" class="inline-flex items-center text-gray-500 hover:text-gray-700 text-sm">
               <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
               </svg>

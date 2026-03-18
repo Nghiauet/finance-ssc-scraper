@@ -70,6 +70,7 @@ services:
       BASIC_AUTH_USERNAME: ${BASIC_AUTH_USERNAME}
       BASIC_AUTH_PASSWORD: ${BASIC_AUTH_PASSWORD}
       BASIC_AUTH_REALM: ${BASIC_AUTH_REALM:-SSC Finance}
+      ROOT_PATH: ${ROOT_PATH:-}
     ports:
       - "8030:8000"
     depends_on:

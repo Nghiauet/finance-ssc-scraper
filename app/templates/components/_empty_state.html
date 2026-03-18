@@ -6,7 +6,7 @@
   <p class="mt-1 text-sm text-gray-500">{{ message | default("Get started by creating something new.") }}</p>
   {% if action_url %}
   <div class="mt-6">
-    <a href="{{ action_url }}" class="inline-flex items-center rounded-md bg-primary-600 px-3 py-2 text-sm font-semibold text-white hover:bg-primary-500 transition-colors">
+    <a href="{{ action_url if '://' in action_url else app_path(request, action_url) }}" class="inline-flex items-center rounded-md bg-primary-600 px-3 py-2 text-sm font-semibold text-white hover:bg-primary-500 transition-colors">
       {{ action_label | default("Get started") }}
     </a>
   </div>
