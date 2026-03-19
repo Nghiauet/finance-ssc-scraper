@@ -11,6 +11,7 @@ from app.models import Document, File
 from app.schemas.document import DocumentUpdate, DocumentResponse, DocumentStats
 from app.services.file_stream import stream_stored_file
 from app.services.minio_service import minio_service
+from app.services.scrape_service import scrape_service
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -162,6 +163,13 @@ def export_documents(
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=documents_export.csv"},
     )
+
+
+@router.post("/deduplicate")
+def deduplicate_documents(db: Session = Depends(get_db)):
+    """Remove duplicate documents, keeping the best record in each group."""
+    result = scrape_service.deduplicate_documents(db)
+    return result
 
 
 @router.get("/{doc_id}", response_model=DocumentResponse)

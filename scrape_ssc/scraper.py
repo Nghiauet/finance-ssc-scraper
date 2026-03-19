@@ -87,6 +87,7 @@ class SSCScraper:
         download_all: bool = False,
         downloads_dir: str | Path = "downloads",
         on_page: "Callable[[int, list[dict]], None] | None" = None,
+        on_download: "Callable[[dict], None] | None" = None,
     ) -> ScrapeResult:
         """
         Scrape financial reports from the SSC portal.
@@ -100,6 +101,7 @@ class SSCScraper:
             download_all: Download every file on every page.
             downloads_dir: Where to save downloaded files.
             on_page: Optional callback(page_num, rows) for progress.
+            on_download: Optional callback(dl_info) called after each file download.
 
         Returns:
             ScrapeResult with all report metadata and download info.
@@ -109,12 +111,20 @@ class SSCScraper:
 
         await ssc.load()
 
-        if ticker or from_date or to_date:
-            await ssc.apply_filters(
-                ticker=ticker.upper() if ticker else None,
-                from_date=from_date,
-                to_date=to_date,
-            )
+        # The SSC portal only returns ~10 recent results when no date
+        # range is specified.  Always apply a wide date range so we get
+        # complete data (the portal accepts dates back to 2000).
+        if not from_date:
+            from_date = "01/01/2000"
+        if not to_date:
+            from datetime import datetime as _dt
+            to_date = _dt.now().strftime("%d/%m/%Y")
+
+        await ssc.apply_filters(
+            ticker=ticker.upper() if ticker else None,
+            from_date=from_date,
+            to_date=to_date,
+        )
 
         pag = await ssc.get_pagination()
         total_items = pag.get("total_items", 0)
@@ -144,12 +154,15 @@ class SSCScraper:
                 for i in range(n):
                     path = await ssc.download_file(i, str(dl_dir))
                     if path:
-                        result.downloaded_files.append({
+                        dl_info = {
                             "ticker": rows[i].get("ticker", ""),
                             "company": rows[i].get("company", ""),
                             "report": rows[i].get("report_name", ""),
                             "file": path,
-                        })
+                        }
+                        result.downloaded_files.append(dl_info)
+                        if on_download:
+                            on_download(dl_info)
 
             if page_num < pages:
                 if not await ssc.next_page():

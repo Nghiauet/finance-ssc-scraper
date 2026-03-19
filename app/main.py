@@ -1,4 +1,6 @@
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -73,8 +75,20 @@ app.add_middleware(
 
 app.include_router(api_router)
 
+HCM_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
+
+
+def hcm_time(dt: datetime | None, fmt: str = "%d/%m/%Y %H:%M") -> str:
+    if dt is None:
+        return ""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(HCM_TZ).strftime(fmt)
+
+
 templates = Jinja2Templates(directory="app/templates")
 templates.env.globals["app_path"] = app_path
+templates.env.filters["hcm_time"] = hcm_time
 
 
 # --- Health ---

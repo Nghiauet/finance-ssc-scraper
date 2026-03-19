@@ -3,7 +3,9 @@ import os
 import re
 import shutil
 import tempfile
-from datetime import datetime, timezone
+import unicodedata
+from collections import defaultdict
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from sqlalchemy.orm import Session
@@ -15,7 +17,9 @@ from app.services.minio_service import minio_service
 
 
 def normalize_report_name(report_name: str | None) -> str:
-    return " ".join((report_name or "").split()).casefold()
+    text = unicodedata.normalize("NFC", (report_name or ""))
+    text = text.replace("\xa0", " ").replace("\u200b", "")
+    return " ".join(text.split()).casefold()
 
 
 def parse_report_classification(report_name: str) -> tuple[str | None, str | None]:
@@ -112,12 +116,20 @@ class ScrapeService:
 
             max_pages = params.max_pages if params.max_pages and params.max_pages > 0 else None
 
-            pages_scraped = 0
+            cumulative_reports = 0
+            cumulative_files = 0
 
             def on_page(page_num, rows):
-                nonlocal pages_scraped
-                pages_scraped = page_num
+                nonlocal cumulative_reports
+                cumulative_reports += len(rows)
                 job.total_pages_scraped = page_num
+                job.total_reports_found = cumulative_reports
+                db.commit()
+
+            def on_download(dl_info):
+                nonlocal cumulative_files
+                cumulative_files += 1
+                job.total_files_downloaded = cumulative_files
                 db.commit()
 
             from app.config import settings as app_settings
@@ -130,6 +142,7 @@ class ScrapeService:
                     download_all=params.download_files,
                     downloads_dir=tmp_dir,
                     on_page=on_page,
+                    on_download=on_download,
                 )
 
             self._process_results(db, job, result, tmp_dir)
@@ -138,7 +151,7 @@ class ScrapeService:
             job.completed_at = datetime.now(timezone.utc)
             job.total_reports_found = len(result.reports)
             job.total_files_downloaded = len(result.downloaded_files)
-            job.total_pages_scraped = pages_scraped
+            job.total_pages_scraped = result.total_pages
             db.commit()
 
         except Exception as e:
@@ -229,22 +242,29 @@ class ScrapeService:
     ) -> Document | None:
         normalized_name = normalize_report_name(report_name)
 
-        query = db.query(Document).filter(Document.ticker == ticker)
+        # Pass 1: strict match by ticker + submission_date + normalized report_name
         if submission_date is not None:
-            query = query.filter(Document.submission_date == submission_date)
-
-        candidates = query.order_by(Document.created_at.asc()).all()
-        if submission_date is None and not candidates:
             candidates = (
                 db.query(Document)
-                .filter(Document.ticker == ticker)
-                .order_by(Document.created_at.asc())
+                .filter(Document.ticker == ticker, Document.submission_date == submission_date)
                 .all()
             )
+            for doc in candidates:
+                if normalize_report_name(doc.report_name) == normalized_name:
+                    return doc
 
+        # Pass 2: broader match by ticker + normalized report_name only
+        # Catches cases where submission_date changed or was NULL previously
+        candidates = (
+            db.query(Document)
+            .filter(Document.ticker == ticker)
+            .order_by(Document.created_at.asc())
+            .all()
+        )
         for doc in candidates:
             if normalize_report_name(doc.report_name) == normalized_name:
                 return doc
+
         return None
 
     def _upsert_document_file(self, db: Session, doc: Document, ticker: str, file_path: str) -> None:
@@ -282,6 +302,77 @@ class ScrapeService:
                 minio_service.client.remove_object(old_bucket, old_path)
             except Exception:
                 pass
+
+    def deduplicate_documents(self, db: Session) -> dict:
+        """Remove duplicate documents, keeping the best record in each group.
+
+        Groups by (ticker, normalized_report_name). For each group with
+        duplicates, keeps the record that has a file attached, the latest
+        submission_date, and the latest created_at. Transfers files and
+        non-null metadata from duplicates to the kept record.
+        """
+        all_docs = db.query(Document).all()
+        groups: dict[str, list[Document]] = defaultdict(list)
+
+        for doc in all_docs:
+            key = f"{doc.ticker}|{normalize_report_name(doc.report_name)}"
+            groups[key].append(doc)
+
+        total_deleted = 0
+        files_deleted = 0
+        groups_affected = 0
+
+        for key, docs in groups.items():
+            if len(docs) <= 1:
+                continue
+
+            groups_affected += 1
+
+            # Sort: prefer docs with files, then latest submission_date, then latest created_at
+            docs.sort(
+                key=lambda d: (
+                    d.file_id is not None,
+                    d.submission_date or date.min,
+                    d.created_at or datetime.min.replace(tzinfo=timezone.utc),
+                ),
+                reverse=True,
+            )
+
+            keep = docs[0]
+            for dup in docs[1:]:
+                # Transfer file from dup to keep if keep has no file
+                if not keep.file_id and dup.file_id:
+                    keep.file_id = dup.file_id
+                    dup.file_id = None
+
+                # Delete dup's file if keep already has one
+                if dup.file_id and dup.file_id != keep.file_id:
+                    file_rec = db.query(File).get(dup.file_id)
+                    if file_rec:
+                        try:
+                            minio_service.client.remove_object(file_rec.bucket, file_rec.path)
+                        except Exception:
+                            pass
+                        db.delete(file_rec)
+                        files_deleted += 1
+
+                # Fill missing fields on keep from dup
+                if not keep.submission_date and dup.submission_date:
+                    keep.submission_date = dup.submission_date
+                if not keep.summary and dup.summary:
+                    keep.summary = dup.summary
+                if not keep.ssc_download_url and dup.ssc_download_url:
+                    keep.ssc_download_url = dup.ssc_download_url
+
+                db.delete(dup)
+                total_deleted += 1
+
+        db.commit()
+        return {
+            "duplicates_removed": total_deleted,
+            "files_cleaned": files_deleted,
+            "groups_affected": groups_affected,
+        }
 
     def cleanup_orphans(self, db: Session):
         """Mark any 'running' jobs as failed on startup."""

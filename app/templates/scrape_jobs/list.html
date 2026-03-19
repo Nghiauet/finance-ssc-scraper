@@ -131,12 +131,17 @@
               <div class="text-xs text-gray-500">{{ job.total_files_downloaded }} files &middot; {{ job.total_pages_scraped }} pages</div>
             </td>
             <td class="px-6 py-4 whitespace-nowrap text-xs text-gray-500">
-              <div>{{ job.created_at.strftime("%d/%m/%Y %H:%M") }}</div>
-              {% if job.completed_at %}
+              <div>{{ job.created_at|hcm_time }}</div>
+              {% if job.completed_at and job.started_at %}
               <div class="text-gray-400">
-                {% set duration = (job.completed_at - job.started_at).total_seconds() if job.started_at else 0 %}
-                {% if duration > 60 %}{{ (duration / 60)|int }}m {{ (duration % 60)|int }}s
+                {% set duration = (job.completed_at - job.started_at).total_seconds() %}
+                {% if duration >= 3600 %}{{ (duration / 3600)|int }}h {{ ((duration % 3600) / 60)|int }}m
+                {% elif duration >= 60 %}{{ (duration / 60)|int }}m {{ (duration % 60)|int }}s
                 {% else %}{{ duration|int }}s{% endif %}
+              </div>
+              {% elif job.status == 'running' and job.started_at %}
+              <div class="text-yellow-600" data-started="{{ job.started_at.isoformat() }}">
+                Running...
               </div>
               {% endif %}
             </td>
