@@ -56,8 +56,8 @@ def delete_job(job_id: str, db: Session = Depends(get_db)):
     job = db.query(ScrapeJob).get(job_id)
     if not job:
         raise HTTPException(404, "Job not found")
-    if job.status == "running":
-        raise HTTPException(400, "Cannot delete a running job")
+    if scrape_service.is_job_active(job_id):
+        raise HTTPException(400, "Cannot delete an active job")
     db.delete(job)
     db.commit()
     return {"ok": True}

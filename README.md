@@ -1,26 +1,24 @@
 # scrape-ssc
 
-Scrapes financial reports from Vietnam's State Securities Commission portal and serves them through a FastAPI admin UI and API.
+Scrapes financial reports from Vietnam's State Securities Commission portal and serves them through a React SPA and REST API.
 
-## What changed
+## Features
 
-- Documents now default to an in-app viewer instead of a forced download.
-- Files are still available through explicit download actions.
-- HTTP Basic Auth protects the UI, REST API, `/docs`, and `/openapi.json`.
-- FastAPI Swagger UI is available at `/docs`.
+- **SSC Scraper**: Automated scraping of financial reports from SSC portal using Playwright
+- **React Dashboard**: Modern admin UI with charts, filters, batch operations, and dark mode
+- **JWT + Basic Auth**: Login screen for the SPA, Basic Auth still supported for API/curl
+- **Document Viewer**: Inline PDF viewer with navigation between reports
+- **File Storage**: MinIO-backed file storage with proxied downloads
 
 ## Requirements
 
-- Python 3.13+
-- `uv`
-- Docker and Docker Compose for the containerized stack
-- Chromium dependencies if you run the scraper locally
+- Python 3.13+, `uv`
+- Node.js 20+ (for frontend build)
+- Docker and Docker Compose
 
 ## Configuration
 
-The app loads settings from `.env`.
-
-Important variables:
+Copy `.env.example` to `.env` and set your values:
 
 ```env
 DATABASE_URL=postgresql+psycopg2://scrape_ssc:scrape_ssc_secret@localhost:5432/scrape_ssc
@@ -33,36 +31,19 @@ BASIC_AUTH_USERNAME=admin
 BASIC_AUTH_PASSWORD=change-this-password
 BASIC_AUTH_REALM=SSC Finance
 ROOT_PATH=
+JWT_SECRET_KEY=
+JWT_EXPIRY_HOURS=24
 MAX_CONCURRENT_SCRAPES=1
 SCRAPE_HEADLESS=true
 ```
 
-Local credentials are defined in `.env`. Rotate them before using this outside local development.
+### Reverse proxy subpath
 
-If you publish the app behind an Nginx subpath such as `/ssc-portal`, set `ROOT_PATH=/ssc-portal` so the UI, API links, `/docs`, and `openapi.json` are generated with that prefix.
+If deploying behind nginx at a subpath (e.g., `/ssc-portal`), set `ROOT_PATH=/ssc-portal`. This configures:
+- FastAPI's `root_path` for correct `/docs` and `/openapi.json` URLs
+- Frontend base path (passed as `VITE_BASE_PATH` build arg) for React Router and API calls
 
-## Local development
-
-Install dependencies:
-
-```bash
-uv sync
-uv run playwright install chromium
-```
-
-Run the API:
-
-```bash
-uv run ssc-api
-```
-
-Open:
-
-- UI: `http://localhost:8000/`
-- Swagger UI: `http://localhost:8000/docs`
-- OpenAPI schema: `http://localhost:8000/openapi.json`
-
-## Docker
+## Docker (recommended)
 
 Start the full stack:
 
@@ -70,40 +51,88 @@ Start the full stack:
 docker compose up -d --build
 ```
 
-The API is exposed on `http://localhost:8030`.
+The app is exposed at `http://localhost:8030`. Docker Compose reads `BASIC_AUTH_USERNAME`, `BASIC_AUTH_PASSWORD`, `BASIC_AUTH_REALM`, and `ROOT_PATH` from your `.env`.
 
-Docker Compose forwards `BASIC_AUTH_USERNAME`, `BASIC_AUTH_PASSWORD`, `BASIC_AUTH_REALM`, and `ROOT_PATH` into the container, so keep them in the project `.env`.
-
-## Document viewing
-
-- `/documents` lists stored reports.
-- Clicking a document opens an internal viewer page.
-- PDFs are embedded inline with the browser PDF renderer.
-- Non-previewable files keep a download fallback.
-- Raw file endpoints:
-  - `/api/documents/{doc_id}/content`
-  - `/api/documents/{doc_id}/download`
-  - `/api/files/{file_id}/content`
-  - `/api/files/{file_id}/download`
-
-## Useful commands
+Stop:
 
 ```bash
-uv run scrape-ssc
-uv run scrape-ssc --ticker VNM
-uv run scrape-ssc --ticker VNM --download-all
-uv run scrape-ssc --max-pages 0
-uv run scrape-ssc --from-date 01/01/2024 --to-date 31/12/2024
+docker compose down        # stop all
+docker compose down -v     # stop + delete volumes
 ```
+
+Debug with MinIO console:
+
+```bash
+docker compose --profile debug up -d   # MinIO console on :9003
+```
+
+## Local development
+
+```bash
+# Backend
+uv sync
+uv run playwright install chromium
+uv run ssc-api                          # API on http://localhost:8000
+
+# Frontend (separate terminal)
+cd frontend
+npm install
+npm run dev                             # Vite dev server on http://localhost:5173
+                                        # proxies /api → localhost:8030
+```
+
+## CLI scraper
+
+```bash
+uv run scrape-ssc                                       # latest 5 pages
+uv run scrape-ssc --ticker VNM                           # all VNM reports
+uv run scrape-ssc --ticker VNM --download-all            # + download PDFs
+uv run scrape-ssc --max-pages 0                          # all pages
+uv run scrape-ssc --from-date 01/01/2024 --to-date 31/12/2024
+
+# Via Docker
+docker compose run --profile cli scraper --ticker VNM
+```
+
+## API endpoints
+
+All API endpoints require authentication (Basic Auth or Bearer JWT).
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/auth/login` | Get JWT token (public) |
+| GET | `/api/auth/me` | Current user info |
+| GET | `/api/dashboard/stats` | Dashboard statistics |
+| GET | `/api/companies` | List companies |
+| GET | `/api/companies/{id}` | Company detail |
+| POST | `/api/companies/batch-delete` | Batch delete companies |
+| GET | `/api/documents` | List documents (with filters) |
+| GET | `/api/documents/{id}` | Document detail |
+| GET | `/api/documents/{id}/content` | Inline file view |
+| GET | `/api/documents/{id}/download` | File download |
+| GET | `/api/documents/{id}/navigation` | Newer/older document links |
+| GET | `/api/documents/stats` | Document statistics |
+| GET | `/api/documents/export` | CSV export |
+| POST | `/api/documents/batch-delete` | Batch delete documents |
+| GET | `/api/scrape-jobs` | List scrape jobs |
+| POST | `/api/scrape-jobs` | Create scrape job |
+| GET | `/api/files/{id}/content` | Raw file content |
+| GET | `/api/files/{id}/download` | Raw file download |
+| GET | `/api/health` | Health check |
+
+Swagger UI: `/docs` | OpenAPI schema: `/openapi.json`
 
 ## Project layout
 
 ```text
-scrape_ssc/                 Scraper library
+scrape_ssc/                 Scraper library (Playwright + ADF automation)
 app/                        FastAPI application
-app/api/                    REST API routes
-app/models/                 SQLAlchemy models
+app/api/                    REST API routes (auth, companies, documents, files, scrape-jobs, dashboard)
+app/models/                 SQLAlchemy models (Company, Document, File, ScrapeJob)
 app/services/               Scraping, MinIO, and file streaming services
-app/templates/              Jinja templates for the admin UI
-app/main.py                 App entrypoint and page routes
+app/main.py                 App entrypoint, SPA static file serving
+frontend/                   React SPA (Vite + TypeScript + shadcn/ui)
+frontend/src/pages/         Page components (Login, Dashboard, Companies, Documents, ScrapeJobs)
+frontend/src/api/           API client functions
+frontend/src/components/    UI components (shadcn/ui + custom)
 ```

@@ -8,6 +8,7 @@ from collections import defaultdict
 from datetime import date, datetime, timezone
 from pathlib import Path
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
@@ -78,6 +79,13 @@ class ScrapeService:
     @property
     def active_count(self) -> int:
         return len(self._running_jobs)
+
+    @property
+    def active_job_ids(self) -> set[str]:
+        return set(self._running_jobs)
+
+    def is_job_active(self, job_id: str) -> bool:
+        return job_id in self._running_jobs
 
     def start_job(self, db: Session, params: ScrapeJobCreate) -> ScrapeJob:
         from app.config import settings
@@ -375,11 +383,19 @@ class ScrapeService:
         }
 
     def cleanup_orphans(self, db: Session):
-        """Mark any 'running' jobs as failed on startup."""
-        orphans = db.query(ScrapeJob).filter_by(status="running").all()
+        """Mark any unfinished jobs left behind by a restart as failed."""
+        orphans = (
+            db.query(ScrapeJob)
+            .filter(or_(ScrapeJob.status == "pending", ScrapeJob.status == "running"))
+            .all()
+        )
         for job in orphans:
+            previous_status = job.status
             job.status = "failed"
-            job.error_message = "Server restarted while job was running"
+            if previous_status == "pending":
+                job.error_message = "Server restarted before the job began"
+            else:
+                job.error_message = "Server restarted while job was running"
             job.completed_at = datetime.now(timezone.utc)
         if orphans:
             db.commit()

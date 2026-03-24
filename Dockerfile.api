@@ -1,3 +1,14 @@
+# Stage 1: Build frontend
+FROM node:20-alpine AS frontend-builder
+ARG VITE_BASE_PATH=
+ENV VITE_BASE_PATH=${VITE_BASE_PATH}
+WORKDIR /frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+
+# Stage 2: API + Frontend
 FROM python:3.13-slim
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
@@ -8,6 +19,9 @@ COPY pyproject.toml uv.lock README.md ./
 COPY scrape_ssc/ scrape_ssc/
 COPY scrape_financial_reports.py main.py ./
 COPY app/ app/
+
+# Copy built frontend
+COPY --from=frontend-builder /frontend/dist frontend_dist/
 
 RUN uv sync --frozen --no-dev
 

@@ -24,9 +24,20 @@ class Settings(BaseSettings):
     basic_auth_password: str = ""
     basic_auth_realm: str = "SSC Finance"
 
+    # JWT
+    jwt_secret_key: str = ""
+    jwt_expiry_hours: int = 24
+
     # Scraper
     max_concurrent_scrapes: int = 1
     scrape_headless: bool = True
+
+    # LLM Conversions
+    max_concurrent_conversions: int = 3
+
+    # RAG / Embeddings
+    embedding_dimension: int = 1536
+    auto_embed_after_conversion: bool = True
 
 
 settings = Settings()

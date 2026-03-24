@@ -1,14 +1,16 @@
 import csv
 import io
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Document, File
+from app.models import Document, File, MarkdownContent
 from app.schemas.document import DocumentUpdate, DocumentResponse, DocumentStats
+from app.schemas.markdown_content import MarkdownContentResponse
 from app.services.file_stream import stream_stored_file
 from app.services.minio_service import minio_service
 from app.services.scrape_service import scrape_service
@@ -191,6 +193,26 @@ def download_document(doc_id: str, db: Session = Depends(get_db)):
     return stream_stored_file(file, disposition_type="attachment")
 
 
+@router.get("/{doc_id}/markdown", response_model=MarkdownContentResponse)
+def get_document_markdown(doc_id: str, db: Session = Depends(get_db)):
+    doc = get_document_or_404(doc_id, db)
+    mc = db.query(MarkdownContent).filter(MarkdownContent.document_id == doc.id).first()
+    if not mc:
+        raise HTTPException(404, "No markdown content for this document")
+    return MarkdownContentResponse.model_validate(mc)
+
+
+@router.delete("/{doc_id}/markdown")
+def delete_document_markdown(doc_id: str, db: Session = Depends(get_db)):
+    doc = get_document_or_404(doc_id, db)
+    mc = db.query(MarkdownContent).filter(MarkdownContent.document_id == doc.id).first()
+    if not mc:
+        raise HTTPException(404, "No markdown content for this document")
+    db.delete(mc)
+    db.commit()
+    return {"ok": True}
+
+
 @router.put("/{doc_id}", response_model=DocumentResponse)
 def update_document(doc_id: str, data: DocumentUpdate, db: Session = Depends(get_db)):
     doc = db.query(Document).get(doc_id)
@@ -223,3 +245,68 @@ def delete_document(doc_id: str, db: Session = Depends(get_db)):
     db.delete(doc)
     db.commit()
     return {"ok": True}
+
+
+@router.get("/{doc_id}/navigation")
+def document_navigation(doc_id: str, db: Session = Depends(get_db)):
+    doc = get_document_or_404(doc_id, db)
+
+    newer = (
+        db.query(Document.id)
+        .filter(
+            Document.ticker == doc.ticker,
+            Document.id != doc.id,
+            (Document.submission_date > doc.submission_date)
+            | (
+                (Document.submission_date == doc.submission_date)
+                & (Document.created_at > doc.created_at)
+            ),
+        )
+        .order_by(Document.submission_date.asc(), Document.created_at.asc())
+        .first()
+    )
+    older = (
+        db.query(Document.id)
+        .filter(
+            Document.ticker == doc.ticker,
+            Document.id != doc.id,
+            (Document.submission_date < doc.submission_date)
+            | (
+                (Document.submission_date == doc.submission_date)
+                & (Document.created_at < doc.created_at)
+            ),
+        )
+        .order_by(Document.submission_date.desc(), Document.created_at.desc())
+        .first()
+    )
+
+    return {
+        "newer_id": newer[0] if newer else None,
+        "older_id": older[0] if older else None,
+    }
+
+
+@router.post("/batch-delete")
+def batch_delete_documents(
+    ids: Annotated[list[str], Body(embed=True)],
+    db: Session = Depends(get_db),
+):
+    if not ids or len(ids) > 100:
+        raise HTTPException(400, "Provide 1-100 document IDs")
+
+    docs = db.query(Document).filter(Document.id.in_(ids)).all()
+    deleted = 0
+    for doc in docs:
+        if doc.file_id:
+            file = db.query(File).get(doc.file_id)
+            if file:
+                try:
+                    minio_service.delete_object(file.path)
+                except Exception:
+                    pass
+                db.delete(file)
+        db.delete(doc)
+        deleted += 1
+
+    db.commit()
+    return {"deleted": deleted}

@@ -36,3 +36,4 @@ class Document(Base):
     company = relationship("Company", back_populates="documents")
     file = relationship("File")
     scrape_job = relationship("ScrapeJob", back_populates="documents")
+    markdown = relationship("MarkdownContent", back_populates="document", uselist=False)

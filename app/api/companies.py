@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from typing import Annotated
+
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
@@ -96,6 +98,24 @@ def delete_company(company_id: str, db: Session = Depends(get_db)):
     db.delete(company)
     db.commit()
     return {"ok": True}
+
+
+@router.post("/batch-delete")
+def batch_delete_companies(
+    ids: Annotated[list[str], Body(embed=True)],
+    db: Session = Depends(get_db),
+):
+    if not ids or len(ids) > 100:
+        raise HTTPException(400, "Provide 1-100 company IDs")
+
+    companies = db.query(Company).filter(Company.id.in_(ids)).all()
+    deleted = 0
+    for company in companies:
+        db.delete(company)
+        deleted += 1
+
+    db.commit()
+    return {"deleted": deleted}
 
 
 @router.get("/{company_id}/documents", response_model=list[DocumentResponse])
