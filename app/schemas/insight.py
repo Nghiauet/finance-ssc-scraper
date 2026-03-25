@@ -14,9 +14,9 @@ class InsightContent(BaseModel):
 
 
 class CompanyInsightResponse(BaseModel):
-    id: str
+    id: str | None = None
     ticker: str
-    company_id: str
+    company_id: str | None = None
     llm_config_id: str | None
     status: Literal["none", "pending", "running", "completed", "failed"]
     content: InsightContent | None

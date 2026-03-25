@@ -22,9 +22,9 @@ def get_insight(ticker: str, db: Session = Depends(get_db)):
     if not insight:
         # Return a stub — status="none" signals "not generated yet" to the frontend
         return CompanyInsightResponse(
-            id="",
+            id=None,
             ticker=ticker.upper(),
-            company_id="",
+            company_id=None,
             llm_config_id=None,
             status="none",
             content=None,
