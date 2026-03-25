@@ -17,6 +17,7 @@ from app.services.minio_service import minio_service
 from app.services.scrape_service import scrape_service
 from app.services.llm_service import llm_service
 from app.services.embedding_service import embedding_service
+from app.services.insight_service import insight_service
 
 
 def normalize_root_path(value: str) -> str:
@@ -33,10 +34,10 @@ FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend_dist"
 
 
 def _ensure_pgvector(eng):
-    """Enable pgvector extension and add embedding column if needed."""
+    """Enable pgvector extension and add/migrate embedding column."""
     with eng.connect() as conn:
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-        # Add embedding column if it doesn't exist
+        # Add embedding column without fixed dimension (accepts any size)
         conn.execute(text("""
             DO $$
             BEGIN
@@ -44,11 +45,30 @@ def _ensure_pgvector(eng):
                     SELECT 1 FROM information_schema.columns
                     WHERE table_name = 'document_chunks' AND column_name = 'embedding'
                 ) THEN
-                    ALTER TABLE document_chunks
-                    ADD COLUMN embedding vector(:dim);
+                    ALTER TABLE document_chunks ADD COLUMN embedding vector;
+                ELSE
+                    -- Migrate from fixed-dimension to flexible vector if needed
+                    ALTER TABLE document_chunks ALTER COLUMN embedding TYPE vector;
                 END IF;
             END $$;
-        """), {"dim": settings.embedding_dimension})
+        """))
+        conn.commit()
+
+
+def _ensure_schema_migrations(eng):
+    """Add columns that create_all cannot add to existing tables."""
+    with eng.connect() as conn:
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'llm_configs' AND column_name = 'embedding_dimension'
+                ) THEN
+                    ALTER TABLE llm_configs ADD COLUMN embedding_dimension INTEGER;
+                END IF;
+            END $$;
+        """))
         conn.commit()
 
 
@@ -56,11 +76,13 @@ def _ensure_pgvector(eng):
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     _ensure_pgvector(engine)
+    _ensure_schema_migrations(engine)
     minio_service.ensure_bucket()
     db = next(get_db())
     scrape_service.cleanup_orphans(db)
     llm_service.cleanup_orphans(db)
     embedding_service.cleanup_orphans(db)
+    insight_service.cleanup_orphans(db)
     db.close()
     yield
 
@@ -117,6 +139,9 @@ class SPAStaticFiles(StaticFiles):
             return await super().get_response(path, scope)
         except StarletteHTTPException as ex:
             if ex.status_code == 404:
+                # Don't serve SPA fallback for API paths — let the 404 propagate
+                if path.startswith("api/"):
+                    raise
                 return await super().get_response("index.html", scope)
             raise
 
