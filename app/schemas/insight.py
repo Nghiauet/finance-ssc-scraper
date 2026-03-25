@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -16,7 +17,8 @@ class CompanyInsightResponse(BaseModel):
     id: str
     ticker: str
     company_id: str
-    status: str  # "none" | "pending" | "running" | "completed" | "failed"
+    llm_config_id: str | None
+    status: Literal["none", "pending", "running", "completed", "failed"]
     content: InsightContent | None
     error_message: str | None
     generated_at: datetime | None
