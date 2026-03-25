@@ -13,3 +13,4 @@ class Company(Base):
     metadata_: Mapped[dict | None] = mapped_column("metadata", JSON)
 
     documents = relationship("Document", back_populates="company", lazy="dynamic")
+    insight = relationship("CompanyInsight", back_populates="company", uselist=False)
