@@ -1,6 +1,6 @@
 import { Link, useParams } from "react-router-dom"
-import { useQuery } from "@tanstack/react-query"
-import { ArrowLeft, Scan, FileText, Eye, Download } from "lucide-react"
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
+import { ArrowLeft, Scan, FileText, Eye, Download, Loader2, RefreshCw, Sparkles } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -14,6 +14,10 @@ import { getCompany, listCompanyDocuments } from "@/api/companies"
 import { getDocumentDownloadUrl } from "@/api/documents"
 import { formatDate, formatDateTime } from "@/lib/format"
 import { getToken } from "@/api/client"
+import { useDocumentTitle } from "@/hooks/use-document-title"
+import { toast } from "sonner"
+import { getInsight, generateInsight } from "@/api/insights"
+import type { InsightSection } from "@/types"
 
 export function CompanyDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -24,10 +28,34 @@ export function CompanyDetailPage() {
     enabled: !!id,
   })
 
+  useDocumentTitle(company ? `${company.symbol} — ${company.name}` : "Company")
+
   const { data: documents } = useQuery({
     queryKey: ["company-documents", id],
     queryFn: () => listCompanyDocuments(id!, { page_size: 100 }),
     enabled: !!id,
+  })
+
+  const queryClient = useQueryClient()
+
+  const { data: insight } = useQuery({
+    queryKey: ["insight", company?.symbol],
+    queryFn: () => getInsight(company!.symbol),
+    enabled: !!company,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status
+      return status === "pending" || status === "running" ? 3000 : false
+    },
+  })
+
+  const generateMutation = useMutation({
+    mutationFn: (force: boolean) => generateInsight(company!.symbol, { force }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["insight", company?.symbol] })
+    },
+    onError: (err: Error) => {
+      toast.error(err.message)
+    },
   })
 
   const token = getToken()
@@ -73,6 +101,78 @@ export function CompanyDetailPage() {
               Scrape {company.symbol}
             </Link>
           </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Sparkles className="h-4 w-4" />
+            Phân tích AI
+          </CardTitle>
+          {insight?.status === "completed" && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={() => generateMutation.mutate(true)}
+              disabled={generateMutation.isPending}
+              title="Làm mới phân tích"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+            </Button>
+          )}
+        </CardHeader>
+        <CardContent>
+          {(!insight || insight.status === "none") && (
+            <div className="flex flex-col items-center gap-3 py-6 text-center">
+              <Sparkles className="h-8 w-8 text-muted-foreground" />
+              <p className="text-sm text-muted-foreground">Chưa có phân tích AI</p>
+              <Button
+                size="sm"
+                onClick={() => generateMutation.mutate(false)}
+                disabled={generateMutation.isPending}
+              >
+                {generateMutation.isPending ? (
+                  <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> Đang tạo...</>
+                ) : (
+                  "Tạo phân tích"
+                )}
+              </Button>
+            </div>
+          )}
+
+          {(insight?.status === "pending" || insight?.status === "running") && (
+            <div className="flex items-center gap-2 py-6 justify-center text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <span className="text-sm">Đang phân tích...</span>
+            </div>
+          )}
+
+          {insight?.status === "failed" && (
+            <div className="space-y-3 py-4">
+              <p className="text-sm text-destructive">{insight.error_message ?? "Phân tích thất bại"}</p>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => generateMutation.mutate(true)}
+                disabled={generateMutation.isPending}
+              >
+                Thử lại
+              </Button>
+            </div>
+          )}
+
+          {insight?.status === "completed" && insight.content && (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {insight.content.sections.map((section: InsightSection, i: number) => (
+                <div key={i} className="rounded-md border p-3">
+                  <p className="text-sm font-semibold mb-1">{section.title}</p>
+                  <p className="text-sm text-muted-foreground leading-relaxed">{section.content}</p>
+                </div>
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
 
