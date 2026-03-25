@@ -15,6 +15,9 @@ logger = logging.getLogger(__name__)
 
 
 class InsightService:
+    def __init__(self) -> None:
+        self._running_insights: dict[str, asyncio.Task] = {}
+
     def get_insight(self, db: Session, ticker: str) -> CompanyInsight | None:
         return db.query(CompanyInsight).filter(CompanyInsight.ticker == ticker.upper()).first()
 
@@ -53,23 +56,31 @@ class InsightService:
         db.commit()
         db.refresh(insight)
 
-        asyncio.create_task(self._run_insight(insight.id, ticker.upper()))
+        task = asyncio.create_task(self._run_insight(insight.id, ticker.upper()))
+        self._running_insights[insight.id] = task
+        task.add_done_callback(lambda _: self._running_insights.pop(insight.id, None))
 
         return insight
 
     async def _run_insight(self, insight_id: str, ticker: str) -> None:
         db = SessionLocal()
         try:
+            # Re-fetch insight to get llm_config_id set by caller
             insight = db.query(CompanyInsight).get(insight_id)
             insight.status = "running"
             db.commit()
 
-            # Resolve chat config (vision type)
-            chat_config = (
-                db.query(LLMConfig)
-                .filter(LLMConfig.is_default == True, LLMConfig.config_type == "vision")
-                .first()
-            )
+            # Resolve chat LLM config (use caller-specified if set, else default vision)
+            if insight.llm_config_id:
+                chat_config = db.query(LLMConfig).get(insight.llm_config_id)
+                if not chat_config:
+                    raise ValueError(f"LLM config {insight.llm_config_id} not found")
+            else:
+                chat_config = (
+                    db.query(LLMConfig)
+                    .filter(LLMConfig.is_default == True, LLMConfig.config_type == "vision")
+                    .first()
+                )
             if not chat_config:
                 raise ValueError("No default vision LLM config found. Create one in Settings.")
 
