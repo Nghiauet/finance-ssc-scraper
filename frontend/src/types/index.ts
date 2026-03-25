@@ -93,6 +93,7 @@ export interface LLMConfig {
   max_tokens: number
   is_default: boolean
   config_type: "vision" | "embedding"
+  embedding_dimension: number | null
   created_at: string
 }
 
@@ -107,6 +108,23 @@ export interface ConversionJob {
   started_at: string | null
   completed_at: string | null
   created_at: string
+  document_ticker: string | null
+  document_report_name: string | null
+}
+
+export interface EmbeddingJob {
+  id: string
+  document_id: string | null
+  llm_config_id: string | null
+  status: "pending" | "running" | "completed" | "failed"
+  total_chunks: number
+  chunks_processed: number
+  error_message: string | null
+  started_at: string | null
+  completed_at: string | null
+  created_at: string
+  document_ticker: string | null
+  document_report_name: string | null
 }
 
 export interface MarkdownContent {
@@ -115,5 +133,26 @@ export interface MarkdownContent {
   content: string
   page_count: number
   model_name: string | null
+  created_at: string
+}
+
+export interface InsightSection {
+  title: string
+  content: string
+}
+
+export interface InsightContent {
+  sections: InsightSection[]
+}
+
+export interface CompanyInsight {
+  id: string | null
+  ticker: string
+  company_id: string | null
+  llm_config_id: string | null
+  status: 'none' | 'pending' | 'running' | 'completed' | 'failed'
+  content: InsightContent | null
+  error_message: string | null
+  generated_at: string | null
   created_at: string
 }
