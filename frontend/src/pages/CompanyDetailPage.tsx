@@ -163,15 +163,19 @@ export function CompanyDetailPage() {
             </div>
           )}
 
-          {insight?.status === "completed" && insight.content && (
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              {insight.content.sections.map((section: InsightSection, i: number) => (
-                <div key={i} className="rounded-md border p-3">
-                  <p className="text-sm font-semibold mb-1">{section.title}</p>
-                  <p className="text-sm text-muted-foreground leading-relaxed">{section.content}</p>
-                </div>
-              ))}
-            </div>
+          {insight?.status === "completed" && (
+            insight.content ? (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {insight.content.sections.map((section: InsightSection, i: number) => (
+                  <div key={i} className="rounded-md border p-3">
+                    <p className="text-sm font-semibold mb-1">{section.title}</p>
+                    <p className="text-sm text-muted-foreground leading-relaxed">{section.content}</p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground py-4 text-center">Không có nội dung phân tích.</p>
+            )
           )}
         </CardContent>
       </Card>
