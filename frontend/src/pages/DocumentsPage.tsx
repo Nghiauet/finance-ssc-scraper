@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { Link, useSearchParams } from "react-router-dom"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { Search, Trash2, X, Download, Eye, Sparkles } from "lucide-react"
+import { Search, Trash2, X, Download, Eye, Sparkles, Loader2 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -28,14 +28,16 @@ import {
   getDocumentStats,
   getExportUrl,
 } from "@/api/documents"
-import { createBatchConversion } from "@/api/conversions"
+import { createBatchConversion, createFilterBatchConversion } from "@/api/conversions"
 import { formatDate } from "@/lib/format"
 import { getToken } from "@/api/client"
 import { toast } from "sonner"
+import { useDocumentTitle } from "@/hooks/use-document-title"
 
 const PAGE_SIZE = 20
 
 export function DocumentsPage() {
+  useDocumentTitle("Documents")
   const [searchParams, setSearchParams] = useSearchParams()
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const queryClient = useQueryClient()
@@ -99,7 +101,37 @@ export function DocumentsPage() {
     mutationFn: (ids: string[]) => createBatchConversion({ document_ids: ids }),
     onSuccess: (data) => {
       setSelectedIds(new Set())
-      toast.success(`Started ${data.length} conversion jobs`)
+      const jobCount = data.jobs.length
+      const errorCount = data.errors.length
+      if (errorCount > 0) {
+        toast.warning(`${jobCount} jobs created, ${errorCount} failed`)
+      } else {
+        toast.success(`Started ${jobCount} conversion jobs`)
+      }
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+
+  const filterConvertMutation = useMutation({
+    mutationFn: () =>
+      createFilterBatchConversion({
+        ticker: ticker || undefined,
+        exchange: exchange || undefined,
+        report_type: report_type || undefined,
+        report_period: report_period || undefined,
+        year: year ? parseInt(year) : undefined,
+      }),
+    onSuccess: (data) => {
+      if (data.jobs_created > 0) {
+        const msg = `Started ${data.jobs_created} conversion jobs (${data.total_matching} matching documents)`
+        if (data.errors.length > 0) {
+          toast.warning(`${msg}, ${data.errors.length} failed`)
+        } else {
+          toast.success(msg)
+        }
+      } else {
+        toast.info("No unconverted documents match the current filters")
+      }
     },
     onError: (err: Error) => toast.error(err.message),
   })
@@ -193,6 +225,26 @@ export function DocumentsPage() {
               />
             </>
           )}
+          <ConfirmDialog
+            trigger={
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={filterConvertMutation.isPending}
+              >
+                {filterConvertMutation.isPending ? (
+                  <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                ) : (
+                  <Sparkles className="mr-1.5 h-4 w-4" />
+                )}
+                Convert All{hasFilters ? " Matching" : ""}
+              </Button>
+            }
+            title="Convert all matching documents?"
+            description={`This will start conversion jobs for all unconverted documents${hasFilters ? " matching the current filters" : ""}. Already converted documents will be skipped.`}
+            confirmLabel="Convert"
+            onConfirm={() => filterConvertMutation.mutate()}
+          />
           <Button variant="outline" size="sm" onClick={handleExport}>
             <Download className="mr-1.5 h-4 w-4" /> Export CSV
           </Button>

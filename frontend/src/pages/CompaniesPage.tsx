@@ -1,25 +1,31 @@
 import { useState } from "react"
 import { Link, useSearchParams } from "react-router-dom"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { Search, Trash2, X } from "lucide-react"
+import { Search, Trash2, X, FileText, FileDown } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ExchangeBadge } from "@/components/StatusBadge"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
+import { ConvertDocumentsModal } from "@/components/ConvertDocumentsModal"
 import { Pagination } from "@/components/Pagination"
 import { EmptyState } from "@/components/EmptyState"
 import { listCompanies, countCompanies, deleteCompany, batchDeleteCompanies } from "@/api/companies"
+import type { Company } from "@/types"
 import { toast } from "sonner"
+import { useDocumentTitle } from "@/hooks/use-document-title"
 
 const PAGE_SIZE = 20
 
 export function CompaniesPage() {
+  useDocumentTitle("Companies")
   const [searchParams, setSearchParams] = useSearchParams()
   const search = searchParams.get("search") || ""
   const page = parseInt(searchParams.get("page") || "1")
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [convertModalOpen, setConvertModalOpen] = useState(false)
+  const [convertModalCompanies, setConvertModalCompanies] = useState<Company[]>([])
   const queryClient = useQueryClient()
 
   const { data: companies, isLoading } = useQuery({
@@ -82,18 +88,27 @@ export function CompaniesPage() {
         </h1>
 
         {selectedIds.size > 0 && (
-          <ConfirmDialog
-            trigger={
-              <Button variant="destructive" size="sm">
-                <Trash2 className="mr-1.5 h-4 w-4" />
-                Delete {selectedIds.size} selected
-              </Button>
-            }
-            title="Delete selected companies?"
-            description={`This will permanently delete ${selectedIds.size} companies and cannot be undone.`}
-            confirmLabel="Delete"
-            onConfirm={() => batchDeleteMutation.mutate([...selectedIds])}
-          />
+          <div className="flex items-center gap-2">
+            <Button size="sm" onClick={() => {
+              setConvertModalCompanies((companies ?? []).filter((c) => selectedIds.has(c.id)))
+              setConvertModalOpen(true)
+            }}>
+              <FileDown className="mr-1.5 h-4 w-4" />
+              Convert Documents
+            </Button>
+            <ConfirmDialog
+              trigger={
+                <Button variant="destructive" size="sm">
+                  <Trash2 className="mr-1.5 h-4 w-4" />
+                  Delete {selectedIds.size} selected
+                </Button>
+              }
+              title="Delete selected companies?"
+              description={`This will permanently delete ${selectedIds.size} companies and cannot be undone.`}
+              confirmLabel="Delete"
+              onConfirm={() => batchDeleteMutation.mutate([...selectedIds])}
+            />
+          </div>
         )}
       </div>
 
@@ -190,17 +205,24 @@ export function CompaniesPage() {
                   </td>
                   <td className="p-3 text-center">{c.document_count}</td>
                   <td className="p-3">
-                    <ConfirmDialog
-                      trigger={
-                        <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive">
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      }
-                      title={`Delete ${c.symbol}?`}
-                      description="This company will be permanently deleted."
-                      confirmLabel="Delete"
-                      onConfirm={() => deleteMutation.mutate(c.id)}
-                    />
+                    <div className="flex items-center gap-1">
+                      <Button asChild variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-primary">
+                        <Link to={`/documents?ticker=${c.symbol}`}>
+                          <FileText className="h-3.5 w-3.5" />
+                        </Link>
+                      </Button>
+                      <ConfirmDialog
+                        trigger={
+                          <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive">
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        }
+                        title={`Delete ${c.symbol}?`}
+                        description="This company will be permanently deleted."
+                        confirmLabel="Delete"
+                        onConfirm={() => deleteMutation.mutate(c.id)}
+                      />
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -219,6 +241,17 @@ export function CompaniesPage() {
             return prev
           })
         }
+      />
+
+      <ConvertDocumentsModal
+        open={convertModalOpen}
+        companies={convertModalCompanies}
+        onClose={() => setConvertModalOpen(false)}
+        onSuccess={() => {
+          setConvertModalOpen(false)
+          setSelectedIds(new Set())
+          setConvertModalCompanies([])
+        }}
       />
     </div>
   )

@@ -36,7 +36,6 @@ class Settings(BaseSettings):
     max_concurrent_conversions: int = 3
 
     # RAG / Embeddings
-    embedding_dimension: int = 1536
     auto_embed_after_conversion: bool = True
 
 

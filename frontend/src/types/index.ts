@@ -110,6 +110,12 @@ export interface ConversionJob {
   created_at: string
   document_ticker: string | null
   document_report_name: string | null
+  document_exchange: string | null
+  document_report_type: string | null
+  document_report_period: string | null
+  document_year: number | null
+  document_quarter: number | null
+  document_company_name: string | null
 }
 
 export interface EmbeddingJob {
@@ -125,6 +131,83 @@ export interface EmbeddingJob {
   created_at: string
   document_ticker: string | null
   document_report_name: string | null
+}
+
+export interface ConversionPreviewCount {
+  unconverted: number
+  already_converted: number
+}
+
+export interface BatchConversionError {
+  document_id: string
+  ticker: string | null
+  report_name: string | null
+  error: string
+}
+
+export interface ConversionJobListResponse {
+  jobs: ConversionJob[]
+  total: number
+}
+
+export interface BatchConversionResponse {
+  jobs: ConversionJob[]
+  errors: BatchConversionError[]
+}
+
+export interface FilterBatchConversionResponse {
+  jobs_created: number
+  total_matching: number
+  jobs: ConversionJob[]
+  errors: BatchConversionError[]
+}
+
+export interface ConversionStatusCounts {
+  all: number
+  pending: number
+  running: number
+  completed: number
+  failed: number
+  active: number
+}
+
+export interface ConversionTickerStats {
+  ticker: string
+  company_name: string | null
+  total_documents: number
+  converted: number
+  unconverted: number
+}
+
+export interface ConversionStatsResponse {
+  total_documents: number
+  converted_documents: number
+  unconverted_documents: number
+  active_jobs: number
+  completed_jobs: number
+  failed_jobs: number
+  by_ticker: ConversionTickerStats[]
+}
+
+export interface ConvertedDocument {
+  document_id: string
+  ticker: string
+  exchange: string | null
+  report_name: string
+  report_type: string | null
+  report_period: string | null
+  year: number | null
+  quarter: number | null
+  company_name: string | null
+  page_count: number
+  model_name: string | null
+  converted_at: string | null
+  markdown_id: string
+}
+
+export interface ConvertedDocumentsResponse {
+  documents: ConvertedDocument[]
+  total: number
 }
 
 export interface MarkdownContent {

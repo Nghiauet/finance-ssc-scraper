@@ -1,5 +1,6 @@
 import csv
 import io
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
@@ -15,7 +16,23 @@ from app.services.file_stream import stream_stored_file
 from app.services.minio_service import minio_service
 from app.services.scrape_service import scrape_service
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/documents", tags=["documents"])
+
+
+def _delete_document_file(doc: Document, db: Session) -> None:
+    """Delete a document's associated file from MinIO and DB."""
+    if not doc.file_id:
+        return
+    file = db.query(File).get(doc.file_id)
+    if not file:
+        return
+    try:
+        minio_service.delete_object(file.path, bucket=file.bucket)
+    except Exception:
+        logger.warning("Failed to delete MinIO object %s/%s", file.bucket, file.path)
+    db.delete(file)
 
 
 def get_document_or_404(doc_id: str, db: Session) -> Document:
@@ -41,9 +58,9 @@ def list_documents(
     exchange: str = Query(""),
     report_type: str = Query(""),
     report_period: str = Query(""),
-    year: int | None = None,
-    quarter: int | None = None,
-    search: str = Query(""),
+    year: int | None = Query(None, ge=1990, le=2100),
+    quarter: int | None = Query(None, ge=1, le=4),
+    search: str = Query("", max_length=200),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -232,16 +249,7 @@ def delete_document(doc_id: str, db: Session = Depends(get_db)):
     if not doc:
         raise HTTPException(404, "Document not found")
 
-    # Delete file from MinIO if exists
-    if doc.file_id:
-        file = db.query(File).get(doc.file_id)
-        if file:
-            try:
-                minio_service.delete_object(file.path)
-            except Exception:
-                pass
-            db.delete(file)
-
+    _delete_document_file(doc, db)
     db.delete(doc)
     db.commit()
     return {"ok": True}
@@ -295,18 +303,9 @@ def batch_delete_documents(
         raise HTTPException(400, "Provide 1-100 document IDs")
 
     docs = db.query(Document).filter(Document.id.in_(ids)).all()
-    deleted = 0
     for doc in docs:
-        if doc.file_id:
-            file = db.query(File).get(doc.file_id)
-            if file:
-                try:
-                    minio_service.delete_object(file.path)
-                except Exception:
-                    pass
-                db.delete(file)
+        _delete_document_file(doc, db)
         db.delete(doc)
-        deleted += 1
 
     db.commit()
-    return {"deleted": deleted}
+    return {"deleted": len(docs)}

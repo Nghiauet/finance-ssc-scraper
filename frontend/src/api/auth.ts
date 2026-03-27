@@ -1,4 +1,4 @@
-import { apiFetch, setToken, clearToken } from "./client"
+import { apiFetch, setToken, clearToken, withBase } from "./client"
 import type { LoginResponse } from "@/types"
 
 export async function login(
@@ -15,7 +15,7 @@ export async function login(
 
 export function logout(): void {
   clearToken()
-  window.location.href = "/login"
+  window.location.href = withBase("/login")
 }
 
 export async function getMe(): Promise<{ username: string }> {

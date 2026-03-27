@@ -21,6 +21,10 @@ class KnowledgeSearchResult(BaseModel):
     report_name: str
     section_heading: str | None
     score: float
+    year: int | None = None
+    report_type: str | None = None
+    report_period: str | None = None
+    company_name: str | None = None
 
 
 class KnowledgeSearchResponse(BaseModel):
@@ -59,6 +63,8 @@ class EmbeddingJobResponse(BaseModel):
     started_at: datetime | None
     completed_at: datetime | None
     created_at: datetime
+    document_ticker: str | None = None
+    document_report_name: str | None = None
 
     model_config = {"from_attributes": True}
 

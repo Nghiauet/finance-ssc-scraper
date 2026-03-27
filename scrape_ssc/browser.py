@@ -177,7 +177,7 @@ class SSCBrowser:
             """)
             if new_stt and new_stt != old_stt:
                 return True
-        return True
+        return False
 
     async def download_file(self, row_index: int, dest: str) -> str | None:
         """Download the file for a given row index. Returns saved path."""

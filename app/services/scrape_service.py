@@ -307,7 +307,7 @@ class ScrapeService:
 
         if old_path != object_name or old_bucket != minio_service.bucket:
             try:
-                minio_service.client.remove_object(old_bucket, old_path)
+                minio_service.delete_object(old_path, bucket=old_bucket)
             except Exception:
                 pass
 
@@ -358,7 +358,7 @@ class ScrapeService:
                     file_rec = db.query(File).get(dup.file_id)
                     if file_rec:
                         try:
-                            minio_service.client.remove_object(file_rec.bucket, file_rec.path)
+                            minio_service.delete_object(file_rec.path, bucket=file_rec.bucket)
                         except Exception:
                             pass
                         db.delete(file_rec)

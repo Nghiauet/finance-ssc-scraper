@@ -9,6 +9,7 @@ export interface LLMConfigCreateParams {
   max_tokens?: number
   is_default?: boolean
   config_type?: string
+  embedding_dimension?: number | null
 }
 
 export interface LLMConfigUpdateParams {
@@ -19,6 +20,7 @@ export interface LLMConfigUpdateParams {
   max_tokens?: number
   is_default?: boolean
   config_type?: string
+  embedding_dimension?: number | null
 }
 
 export async function listLLMConfigs(config_type?: string) {
@@ -54,5 +56,19 @@ export async function deleteLLMConfig(id: string) {
 export async function testLLMConfig(id: string) {
   return apiFetch<{ ok: boolean; message: string }>(`/api/llm-configs/${id}/test`, {
     method: "POST",
+  })
+}
+
+export interface LLMConfigTestEndpointParams {
+  base_url: string
+  model_name: string
+  api_key: string
+  config_type: string
+}
+
+export async function testLLMEndpoint(data: LLMConfigTestEndpointParams) {
+  return apiFetch<{ ok: boolean; message: string }>("/api/llm-configs/test-endpoint", {
+    method: "POST",
+    body: JSON.stringify(data),
   })
 }

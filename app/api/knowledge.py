@@ -70,30 +70,43 @@ async def embed_documents(data: EmbedRequest, db: Session = Depends(get_db)):
         raise HTTPException(400, "Provide 1-50 document IDs")
 
     jobs = []
+    errors = []
     for doc_id in data.document_ids:
         try:
             job = embedding_service.start_embedding(db, doc_id)
             jobs.append(EmbeddingJobResponse.model_validate(job))
         except (RuntimeError, ValueError) as e:
-            pass  # Skip documents that can't be embedded
+            errors.append(str(e))
+
+    if not jobs and errors:
+        raise HTTPException(422, detail={"message": "No documents could be embedded", "errors": errors})
     return jobs
 
 
 @router.post("/embed-all")
-async def embed_all(db: Session = Depends(get_db)):
-    """Trigger embedding for all documents that have markdown but no chunks."""
+async def embed_all(
+    force: bool = Query(False, description="Re-embed all documents, even already embedded ones"),
+    db: Session = Depends(get_db),
+):
+    """Trigger embedding for documents that have markdown content."""
     from app.models import Document, DocumentChunk, MarkdownContent
 
-    # Find documents with markdown but no chunks
-    docs_with_md = (
-        db.query(MarkdownContent.document_id)
-        .outerjoin(
-            DocumentChunk,
-            DocumentChunk.document_id == MarkdownContent.document_id,
+    if force:
+        # Delete all existing chunks and re-embed everything
+        db.query(DocumentChunk).delete()
+        db.commit()
+        docs_with_md = db.query(MarkdownContent.document_id).all()
+    else:
+        # Only embed documents without chunks
+        docs_with_md = (
+            db.query(MarkdownContent.document_id)
+            .outerjoin(
+                DocumentChunk,
+                DocumentChunk.document_id == MarkdownContent.document_id,
+            )
+            .filter(DocumentChunk.id.is_(None))
+            .all()
         )
-        .filter(DocumentChunk.id.is_(None))
-        .all()
-    )
 
     doc_ids = [row[0] for row in docs_with_md]
     if not doc_ids:
@@ -125,4 +138,11 @@ def list_embed_jobs(
         .limit(page_size)
         .all()
     )
-    return [EmbeddingJobResponse.model_validate(j) for j in jobs]
+    results = []
+    for j in jobs:
+        resp = EmbeddingJobResponse.model_validate(j)
+        if j.document:
+            resp.document_ticker = j.document.ticker
+            resp.document_report_name = j.document.report_name
+        results.append(resp)
+    return results

@@ -1,4 +1,5 @@
 import { apiFetch } from "./client"
+import type { EmbeddingJob } from "@/types"
 
 export interface KnowledgeSearchResult {
   chunk_text: string
@@ -7,6 +8,10 @@ export interface KnowledgeSearchResult {
   report_name: string
   section_heading: string | null
   score: number
+  year: number | null
+  report_type: string | null
+  report_period: string | null
+  company_name: string | null
 }
 
 export interface KnowledgeSearchResponse {
@@ -65,8 +70,17 @@ export async function embedDocuments(document_ids: string[]) {
   })
 }
 
-export async function embedAll() {
-  return apiFetch<{ message: string; started: number }>("/api/knowledge/embed-all", {
+export async function embedAll(force = false) {
+  const q = force ? "?force=true" : ""
+  return apiFetch<{ message: string; started: number }>(`/api/knowledge/embed-all${q}`, {
     method: "POST",
   })
+}
+
+export async function listEmbedJobs(params?: { status?: string; page?: number; page_size?: number }) {
+  const q = new URLSearchParams()
+  if (params?.status) q.set("status", params.status)
+  if (params?.page) q.set("page", String(params.page))
+  if (params?.page_size) q.set("page_size", String(params.page_size))
+  return apiFetch<EmbeddingJob[]>(`/api/knowledge/embed-jobs?${q}`)
 }

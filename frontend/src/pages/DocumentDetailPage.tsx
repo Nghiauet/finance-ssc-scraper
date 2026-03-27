@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, useEffect, useRef } from "react"
 import { Link, useParams } from "react-router-dom"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import {
@@ -32,6 +32,7 @@ import { getDocumentMarkdown, createConversion, listConversions } from "@/api/co
 import { formatDate } from "@/lib/format"
 import { getToken } from "@/api/client"
 import { toast } from "sonner"
+import { useDocumentTitle } from "@/hooks/use-document-title"
 
 type ViewTab = "pdf" | "markdown"
 
@@ -54,17 +55,12 @@ export function DocumentDetailPage() {
     enabled: !!id,
   })
 
+  useDocumentTitle(doc ? doc.report_name : "Document")
+
   const { data: related } = useQuery({
     queryKey: ["related-docs", doc?.ticker],
     queryFn: () => listDocuments({ ticker: doc!.ticker, page_size: 50 }),
     enabled: !!doc?.ticker,
-  })
-
-  const { data: markdown } = useQuery({
-    queryKey: ["document-markdown", id],
-    queryFn: () => getDocumentMarkdown(id!),
-    enabled: !!id,
-    retry: false,
   })
 
   // Poll for active conversion jobs for this document
@@ -74,23 +70,36 @@ export function DocumentDetailPage() {
     enabled: !!id,
     refetchInterval: (query) => {
       const data = query.state.data
-      const hasActive = data?.some(
-        (j) => j.status === "running" || j.status === "pending",
+      const hasActive = data?.jobs.some(
+        (j: { status: string }) => j.status === "running" || j.status === "pending",
       )
       return hasActive ? 2000 : false
     },
   })
 
-  const activeConversion = conversions?.find(
+  const conversionJobs = conversions?.jobs
+  const activeConversion = conversionJobs?.find(
     (j) => j.status === "running" || j.status === "pending",
   )
 
-  const handleConvert = async () => {
+  const lastFailedConversion = conversionJobs?.find(
+    (j) => j.status === "failed",
+  )
+
+  const { data: markdown } = useQuery({
+    queryKey: ["document-markdown", id],
+    queryFn: () => getDocumentMarkdown(id!),
+    enabled: !!id,
+    retry: false,
+    refetchInterval: activeConversion ? 3000 : false,
+  })
+
+  const handleConvert = async (resume: boolean = false) => {
     if (!id) return
     setConverting(true)
     try {
-      await createConversion({ document_id: id })
-      toast.success("Conversion started")
+      await createConversion({ document_id: id, resume })
+      toast.success(resume ? "Resuming conversion" : "Conversion started")
       queryClient.invalidateQueries({ queryKey: ["conversions"] })
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to start conversion")
@@ -99,23 +108,33 @@ export function DocumentDetailPage() {
     }
   }
 
-  // When conversion completes, refetch markdown
-  const latestCompleted = conversions?.find((j) => j.status === "completed")
-  const markdownStale = latestCompleted && !markdown
-  if (markdownStale) {
-    queryClient.invalidateQueries({ queryKey: ["document-markdown", id] })
-  }
+  // Refetch markdown when conversion completes
+  const prevStatusRef = useRef<string | undefined>(undefined)
+  useEffect(() => {
+    const latestStatus = conversionJobs?.[0]?.status
+    if (prevStatusRef.current === "running" && latestStatus === "completed") {
+      queryClient.invalidateQueries({ queryKey: ["document-markdown", id] })
+    }
+    prevStatusRef.current = latestStatus
+  }, [conversions, id, queryClient])
 
   const handleDownload = () => {
     if (!doc) return
     fetch(getDocumentDownloadUrl(doc.id), {
       headers: { Authorization: `Bearer ${token}` },
     })
-      .then((r) => r.blob())
-      .then((blob) => {
+      .then((r) => {
+        const disposition = r.headers.get("content-disposition")
+        const match = disposition?.match(/filename[^;=\n]*=([^;\n]*)/)
+        const filename = match
+          ? match[1].trim().replace(/^["']|["']$/g, "")
+          : `${doc.report_name}.pdf`
+        return r.blob().then((blob) => ({ blob, filename }))
+      })
+      .then(({ blob, filename }) => {
         const a = document.createElement("a")
         a.href = URL.createObjectURL(blob)
-        a.download = doc.report_name
+        a.download = filename
         a.click()
         URL.revokeObjectURL(a.href)
       })
@@ -208,19 +227,36 @@ export function DocumentDetailPage() {
                   </>
                 )}
                 {doc.file_id && !activeConversion && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={handleConvert}
-                    disabled={converting}
-                  >
-                    {converting ? (
-                      <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-                    ) : (
-                      <Sparkles className="mr-1.5 h-4 w-4" />
+                  <>
+                    {markdown && lastFailedConversion && markdown.page_count < (lastFailedConversion.total_pages || Infinity) && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleConvert(true)}
+                        disabled={converting}
+                      >
+                        {converting ? (
+                          <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                        ) : (
+                          <Sparkles className="mr-1.5 h-4 w-4" />
+                        )}
+                        Resume ({markdown.page_count}/{lastFailedConversion.total_pages})
+                      </Button>
                     )}
-                    {markdown ? "Re-convert to Markdown" : "Convert to Markdown"}
-                  </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleConvert(false)}
+                      disabled={converting}
+                    >
+                      {converting ? (
+                        <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Sparkles className="mr-1.5 h-4 w-4" />
+                      )}
+                      {markdown ? "Re-convert to Markdown" : "Convert to Markdown"}
+                    </Button>
+                  </>
                 )}
                 {activeConversion && (
                   <span className="inline-flex items-center gap-1.5 rounded-md bg-primary/10 px-3 py-1.5 text-sm text-primary">
@@ -281,20 +317,49 @@ export function DocumentDetailPage() {
                     </div>
                   </div>
                 )
-              ) : markdown ? (
-                <MarkdownViewer
-                  content={markdown.content}
-                  fileName={`${doc.ticker}_${doc.report_name}.md`}
-                />
               ) : (
-                <div className="flex h-40 items-center justify-center rounded-md border bg-muted">
-                  <div className="text-center text-muted-foreground">
-                    <Sparkles className="mx-auto h-8 w-8" />
-                    <p className="mt-2 text-sm">
-                      No markdown content yet. Click "Convert to Markdown" to generate.
-                    </p>
-                  </div>
-                </div>
+                <>
+                  {activeConversion && (
+                    <div className="mb-3 flex items-center gap-2 rounded-md bg-primary/10 px-3 py-2 text-sm text-primary">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <span>
+                        Converting... {activeConversion.pages_processed}/{activeConversion.total_pages} pages
+                      </span>
+                      {activeConversion.total_pages > 0 && (
+                        <div className="ml-auto h-1.5 w-24 rounded-full bg-primary/20">
+                          <div
+                            className="h-full rounded-full bg-primary transition-all"
+                            style={{
+                              width: `${Math.round((activeConversion.pages_processed / activeConversion.total_pages) * 100)}%`,
+                            }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {markdown?.content ? (
+                    <MarkdownViewer
+                      content={markdown.content}
+                      fileName={`${doc.ticker}_${doc.report_name}.md`}
+                    />
+                  ) : activeConversion ? (
+                    <div className="flex h-40 items-center justify-center rounded-md border bg-muted">
+                      <div className="text-center text-muted-foreground">
+                        <Loader2 className="mx-auto h-8 w-8 animate-spin" />
+                        <p className="mt-2 text-sm">Waiting for first page...</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex h-40 items-center justify-center rounded-md border bg-muted">
+                      <div className="text-center text-muted-foreground">
+                        <Sparkles className="mx-auto h-8 w-8" />
+                        <p className="mt-2 text-sm">
+                          No markdown content yet. Click "Convert to Markdown" to generate.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
 
               {/* Navigation */}

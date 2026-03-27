@@ -1,6 +1,6 @@
-import { useState } from "react"
+import { useState, useEffect, useRef } from "react"
 import { Link } from "react-router-dom"
-import { useQuery, useMutation } from "@tanstack/react-query"
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import {
   Search,
   Brain,
@@ -8,6 +8,9 @@ import {
   Database,
   Loader2,
   Sparkles,
+  RefreshCw,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -20,39 +23,106 @@ import {
 } from "@/components/ui/select"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { MarkdownViewer } from "@/components/MarkdownViewer"
+import { StatusBadge } from "@/components/StatusBadge"
 import {
   searchKnowledge,
   askKnowledge,
   getKnowledgeStats,
   embedAll,
+  listEmbedJobs,
   type KnowledgeSearchResult,
 } from "@/api/knowledge"
+import { formatDuration } from "@/lib/format"
 import { toast } from "sonner"
+import { useDocumentTitle } from "@/hooks/use-document-title"
 
 type Mode = "search" | "ask"
 
 export function KnowledgeBasePage() {
+  useDocumentTitle("Knowledge Base")
+  const queryClient = useQueryClient()
   const [query, setQuery] = useState("")
   const [mode, setMode] = useState<Mode>("search")
   const [ticker, setTicker] = useState("")
   const [year, setYear] = useState("")
   const [reportType, setReportType] = useState("")
+  const [jobsPanelOpen, setJobsPanelOpen] = useState(true)
 
   const [searchResults, setSearchResults] = useState<KnowledgeSearchResult[]>([])
   const [answer, setAnswer] = useState<string | null>(null)
   const [answerSources, setAnswerSources] = useState<KnowledgeSearchResult[]>([])
   const [searching, setSearching] = useState(false)
 
+  const prevJobsRef = useRef<string>("")
+
   const { data: stats } = useQuery({
     queryKey: ["knowledge-stats"],
     queryFn: getKnowledgeStats,
   })
 
+  const { data: embedJobs } = useQuery({
+    queryKey: ["embed-jobs"],
+    queryFn: () => listEmbedJobs({ page_size: 20 }),
+    refetchInterval: (query) => {
+      const data = query.state.data
+      const hasActive = data?.some(
+        (j) => j.status === "running" || j.status === "pending",
+      )
+      return hasActive ? 3000 : false
+    },
+  })
+
+  // Toast notifications on job status changes + refresh stats
+  useEffect(() => {
+    if (!embedJobs) return
+    const key = embedJobs.map((j) => `${j.id}:${j.status}`).join(",")
+    if (prevJobsRef.current && prevJobsRef.current !== key) {
+      let hasNewCompletion = false
+      for (const job of embedJobs) {
+        const prevStatus = prevJobsRef.current
+          .split(",")
+          .find((s) => s.startsWith(job.id))
+          ?.split(":")[1]
+        if (prevStatus && prevStatus !== job.status) {
+          if (job.status === "completed") {
+            const label = job.document_ticker || "Document"
+            toast.success(`Embedding completed: ${label} (${job.total_chunks} chunks)`)
+            hasNewCompletion = true
+          } else if (job.status === "failed") {
+            const label = job.document_ticker || "Document"
+            toast.error(`Embedding failed: ${label}`)
+          }
+        }
+      }
+      if (hasNewCompletion) {
+        queryClient.invalidateQueries({ queryKey: ["knowledge-stats"] })
+      }
+    }
+    prevJobsRef.current = key
+  }, [embedJobs, queryClient])
+
   const embedAllMutation = useMutation({
-    mutationFn: embedAll,
-    onSuccess: (data) => toast.success(data.message),
+    mutationFn: () => embedAll(false),
+    onSuccess: (data) => {
+      toast.success(data.message)
+      queryClient.invalidateQueries({ queryKey: ["embed-jobs"] })
+    },
     onError: (err: Error) => toast.error(err.message),
   })
+
+  const reembedAllMutation = useMutation({
+    mutationFn: () => embedAll(true),
+    onSuccess: (data) => {
+      toast.success(data.message)
+      queryClient.invalidateQueries({ queryKey: ["embed-jobs"] })
+      queryClient.invalidateQueries({ queryKey: ["knowledge-stats"] })
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+
+  const activeJobCount = embedJobs?.filter(
+    (j) => j.status === "running" || j.status === "pending",
+  ).length ?? 0
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -106,8 +176,21 @@ export function KnowledgeBasePage() {
           <Button
             variant="outline"
             size="sm"
+            onClick={() => reembedAllMutation.mutate()}
+            disabled={reembedAllMutation.isPending || embedAllMutation.isPending}
+          >
+            {reembedAllMutation.isPending ? (
+              <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="mr-1.5 h-4 w-4" />
+            )}
+            Re-embed All
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
             onClick={() => embedAllMutation.mutate()}
-            disabled={embedAllMutation.isPending}
+            disabled={embedAllMutation.isPending || reembedAllMutation.isPending}
           >
             {embedAllMutation.isPending ? (
               <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
@@ -118,6 +201,105 @@ export function KnowledgeBasePage() {
           </Button>
         </div>
       </div>
+
+      {/* Embedding Jobs Panel */}
+      {embedJobs && embedJobs.length > 0 && (
+        <Card>
+          <CardHeader
+            className="cursor-pointer select-none p-3"
+            onClick={() => setJobsPanelOpen((v) => !v)}
+          >
+            <div className="flex items-center justify-between">
+              <CardTitle className="flex items-center gap-2 text-sm font-medium">
+                <Sparkles className="h-4 w-4" />
+                Embedding Jobs
+                {activeJobCount > 0 && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-medium text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    {activeJobCount} active
+                  </span>
+                )}
+              </CardTitle>
+              {jobsPanelOpen ? (
+                <ChevronUp className="h-4 w-4 text-muted-foreground" />
+              ) : (
+                <ChevronDown className="h-4 w-4 text-muted-foreground" />
+              )}
+            </div>
+          </CardHeader>
+          {jobsPanelOpen && (
+            <CardContent className="p-0">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-t border-b bg-muted/50 text-left">
+                      <th className="p-2 pl-4 font-medium">Document</th>
+                      <th className="p-2 font-medium">Status</th>
+                      <th className="p-2 font-medium">Progress</th>
+                      <th className="p-2 pr-4 font-medium">Duration</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {embedJobs.map((job) => {
+                      const pct = job.total_chunks > 0
+                        ? Math.round((job.chunks_processed / job.total_chunks) * 100)
+                        : 0
+                      return (
+                        <tr key={job.id} className="border-b last:border-b-0 hover:bg-accent/50 transition-colors">
+                          <td className="p-2 pl-4">
+                            {job.document_id ? (
+                              <Link
+                                to={`/documents/${job.document_id}`}
+                                className="hover:underline"
+                              >
+                                <span className="font-medium text-primary">
+                                  {job.document_ticker || "—"}
+                                </span>
+                                {job.document_report_name && (
+                                  <span className="ml-1.5 text-xs text-muted-foreground truncate max-w-[200px] inline-block align-bottom">
+                                    {job.document_report_name}
+                                  </span>
+                                )}
+                              </Link>
+                            ) : (
+                              <span className="text-muted-foreground">—</span>
+                            )}
+                          </td>
+                          <td className="p-2">
+                            <StatusBadge status={job.status} />
+                          </td>
+                          <td className="p-2">
+                            <div className="flex items-center gap-2">
+                              <div className="h-2 w-24 overflow-hidden rounded-full bg-muted">
+                                <div
+                                  className={`h-full rounded-full transition-all duration-300 ${
+                                    job.status === "failed"
+                                      ? "bg-red-500"
+                                      : job.status === "completed"
+                                        ? "bg-green-500"
+                                        : "bg-primary"
+                                  }`}
+                                  style={{ width: `${job.status === "completed" ? 100 : pct}%` }}
+                                />
+                              </div>
+                              <span className="text-xs text-muted-foreground whitespace-nowrap">
+                                {job.chunks_processed}/{job.total_chunks}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="p-2 pr-4 text-xs text-muted-foreground whitespace-nowrap">
+                            {formatDuration(job.started_at, job.completed_at)}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          )}
+        </Card>
+      )}
 
       {/* Search form */}
       <Card>
@@ -238,6 +420,11 @@ export function KnowledgeBasePage() {
                       <span className="truncate text-muted-foreground">
                         {s.report_name}
                       </span>
+                      {s.year && (
+                        <span className="rounded bg-muted px-1.5 py-0.5 text-muted-foreground">
+                          {s.year}
+                        </span>
+                      )}
                       {s.section_heading && (
                         <span className="text-muted-foreground">
                           &gt; {s.section_heading}
@@ -268,6 +455,11 @@ export function KnowledgeBasePage() {
                   >
                     {result.ticker}
                   </Link>
+                  {result.company_name && (
+                    <span className="text-xs text-muted-foreground">
+                      ({result.company_name})
+                    </span>
+                  )}
                   <span className="text-muted-foreground">-</span>
                   <Link
                     to={`/documents/${result.document_id}`}
@@ -275,6 +467,16 @@ export function KnowledgeBasePage() {
                   >
                     {result.report_name}
                   </Link>
+                  {result.year && (
+                    <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+                      {result.year}
+                    </span>
+                  )}
+                  {result.report_type && (
+                    <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+                      {result.report_type}
+                    </span>
+                  )}
                   {result.section_heading && (
                     <>
                       <span className="text-muted-foreground">&gt;</span>

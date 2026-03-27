@@ -34,7 +34,7 @@ class LLMService:
         return job_id in self._running_jobs
 
     def start_conversion(
-        self, db, document_id: str, llm_config_id: str | None = None
+        self, db, document_id: str, llm_config_id: str | None = None, resume: bool = False
     ) -> ConversionJob:
         from app.config import settings
 
@@ -47,6 +47,18 @@ class LLMService:
             raise ValueError(f"Document {document_id} not found")
         if not doc.file_id:
             raise ValueError(f"Document {document_id} has no attached file")
+
+        # Prevent duplicate active conversions for same document
+        active = (
+            db.query(ConversionJob)
+            .filter(
+                ConversionJob.document_id == document_id,
+                ConversionJob.status.in_(["pending", "running"]),
+            )
+            .first()
+        )
+        if active:
+            raise ValueError("Document already has an active conversion job")
 
         # Resolve LLM config
         config = None
@@ -72,13 +84,15 @@ class LLMService:
         db.commit()
         db.refresh(job)
 
-        task = asyncio.create_task(self._run_conversion(job.id))
+        task = asyncio.create_task(self._run_conversion(job.id, resume=resume))
         self._running_jobs[job.id] = task
         task.add_done_callback(lambda _: self._running_jobs.pop(job.id, None))
 
         return job
 
-    async def _run_conversion(self, job_id: str):
+    PAGE_SEPARATOR = "\n\n---\n\n"
+
+    async def _run_conversion(self, job_id: str, resume: bool = False):
         db = SessionLocal()
         try:
             job = db.query(ConversionJob).get(job_id)
@@ -97,16 +111,58 @@ class LLMService:
             response.close()
             response.release_conn()
 
-            # Convert PDF pages to images and process with LLM
             import fitz  # PyMuPDF
 
             pdf_doc = fitz.open(stream=pdf_bytes, filetype="pdf")
             job.total_pages = len(pdf_doc)
             db.commit()
 
-            page_markdowns = []
+            # Upsert MarkdownContent and determine start page
+            mc = (
+                db.query(MarkdownContent)
+                .filter(MarkdownContent.document_id == doc.id)
+                .first()
+            )
+            if mc:
+                if resume and mc.content and mc.page_count > 0:
+                    start_page = mc.page_count
+                    logger.info(
+                        "Resuming conversion for document %s from page %d/%d",
+                        doc.id, start_page, len(pdf_doc),
+                    )
+                else:
+                    # Fresh conversion — clear existing content
+                    mc.content = ""
+                    mc.page_count = 0
+                    start_page = 0
+            else:
+                mc = MarkdownContent(
+                    document_id=doc.id,
+                    content="",
+                    page_count=0,
+                    model_name=config.model_name,
+                    conversion_job_id=job.id,
+                )
+                db.add(mc)
+                start_page = 0
+
+            mc.conversion_job_id = job.id
+            mc.model_name = config.model_name
+            job.pages_processed = start_page
+            db.commit()
+
+            if start_page >= len(pdf_doc):
+                logger.info("All pages already converted for document %s", doc.id)
+                job.status = "completed"
+                job.completed_at = datetime.now(timezone.utc)
+                db.commit()
+                pdf_doc.close()
+                self._auto_embed(db, doc.id)
+                return
+
+            # Process pages incrementally
             async with httpx.AsyncClient(timeout=120.0) as client:
-                for page_num in range(len(pdf_doc)):
+                for page_num in range(start_page, len(pdf_doc)):
                     page = pdf_doc[page_num]
                     pix = page.get_pixmap(dpi=150)
                     img_bytes = pix.tobytes("jpeg", jpg_quality=85)
@@ -116,42 +172,24 @@ class LLMService:
                         client, config.base_url, api_key, config.model_name,
                         b64_img, config.max_tokens
                     )
-                    page_markdowns.append(md_text)
 
+                    # Append incrementally
+                    if mc.content:
+                        mc.content = mc.content + self.PAGE_SEPARATOR + md_text
+                    else:
+                        mc.content = md_text
+
+                    mc.page_count = page_num + 1
                     job.pages_processed = page_num + 1
                     db.commit()
 
             pdf_doc.close()
 
-            # Concatenate pages with separators
-            full_markdown = "\n\n---\n\n".join(page_markdowns)
-
-            # Upsert MarkdownContent
-            existing = (
-                db.query(MarkdownContent)
-                .filter(MarkdownContent.document_id == doc.id)
-                .first()
-            )
-            if existing:
-                existing.content = full_markdown
-                existing.page_count = len(page_markdowns)
-                existing.model_name = config.model_name
-                existing.conversion_job_id = job.id
-            else:
-                mc = MarkdownContent(
-                    document_id=doc.id,
-                    conversion_job_id=job.id,
-                    content=full_markdown,
-                    page_count=len(page_markdowns),
-                    model_name=config.model_name,
-                )
-                db.add(mc)
-
             job.status = "completed"
             job.completed_at = datetime.now(timezone.utc)
             db.commit()
 
-            # Auto-embed if configured
+            # Auto-embed only after full completion
             self._auto_embed(db, doc.id)
 
         except Exception as e:
@@ -190,14 +228,12 @@ class LLMService:
         max_tokens: int,
     ) -> str:
         """Call an OpenAI-compatible vision API with a base64 image."""
-        base = base_url.rstrip("/")
-        if base.endswith("/chat/completions"):
-            url = base
-        else:
-            url = f"{base}/chat/completions"
+        from app.services import build_openai_url
+        url = build_openai_url(base_url, "/chat/completions")
         payload = {
             "model": model,
             "max_tokens": max_tokens,
+            "stream": False,
             "messages": [
                 {
                     "role": "user",
@@ -221,10 +257,14 @@ class LLMService:
         max_retries = 3
         for attempt in range(max_retries):
             resp = await client.post(url, json=payload, headers=headers)
-            if resp.status_code >= 500 and attempt < max_retries - 1:
-                wait = 2 ** attempt
+            if (resp.status_code >= 500 or resp.status_code == 429) and attempt < max_retries - 1:
+                wait = 2 ** (attempt + 1)  # 2s, 4s, 8s
+                if resp.status_code == 429:
+                    retry_after = resp.headers.get("retry-after")
+                    if retry_after:
+                        wait = min(int(retry_after), 30)
                 logger.warning(
-                    "LLM server error %s (attempt %d/%d), retrying in %ds. Body: %s",
+                    "LLM request error %s (attempt %d/%d), retrying in %ds. Body: %s",
                     resp.status_code, attempt + 1, max_retries, wait,
                     resp.text[:500],
                 )

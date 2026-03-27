@@ -35,8 +35,8 @@ class MinIOService:
     def get_object(self, object_name: str, bucket: str | None = None):
         return self.client.get_object(bucket or self.bucket, object_name)
 
-    def delete_object(self, object_name: str):
-        self.client.remove_object(self.bucket, object_name)
+    def delete_object(self, object_name: str, bucket: str | None = None):
+        self.client.remove_object(bucket or self.bucket, object_name)
 
     def stat_object(self, object_name: str):
         return self.client.stat_object(self.bucket, object_name)

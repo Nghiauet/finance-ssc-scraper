@@ -30,6 +30,7 @@ import { listScrapeJobs } from "@/api/scrape-jobs"
 import { listDocuments } from "@/api/documents"
 import { formatDate, formatRelative } from "@/lib/format"
 import { getToken } from "@/api/client"
+import { useDocumentTitle } from "@/hooks/use-document-title"
 
 const COLORS = [
   "var(--chart-1)",
@@ -40,6 +41,7 @@ const COLORS = [
 ]
 
 export function DashboardPage() {
+  useDocumentTitle("Dashboard")
   const { data: stats, isLoading: statsLoading } = useQuery({
     queryKey: ["dashboard-stats"],
     queryFn: getDashboardStats,

@@ -20,10 +20,12 @@ import {
 } from "@/api/scrape-jobs"
 import { formatDateTime, formatDuration } from "@/lib/format"
 import { toast } from "sonner"
+import { useDocumentTitle } from "@/hooks/use-document-title"
 
 const PAGE_SIZE = 20
 
 export function ScrapeJobsPage() {
+  useDocumentTitle("Scrape Jobs")
   const [searchParams, setSearchParams] = useSearchParams()
   const page = parseInt(searchParams.get("page") || "1")
   const prefillTicker = searchParams.get("ticker") || ""

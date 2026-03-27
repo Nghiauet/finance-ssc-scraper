@@ -46,6 +46,13 @@ class EmbeddingService:
                 .filter(LLMConfig.is_default == True, LLMConfig.config_type == "embedding")
                 .first()
             )
+            if not config:
+                # Fall back to any embedding config if no default is set
+                config = (
+                    db.query(LLMConfig)
+                    .filter(LLMConfig.config_type == "embedding")
+                    .first()
+                )
         if not config:
             raise ValueError("No embedding LLM config found. Create one in Settings.")
 
@@ -58,9 +65,10 @@ class EmbeddingService:
         db.commit()
         db.refresh(job)
 
-        task = asyncio.create_task(self._run_embedding(job.id))
-        self._running_jobs[job.id] = task
-        task.add_done_callback(lambda _: self._running_jobs.pop(job.id, None))
+        job_id_str = str(job.id)
+        task = asyncio.create_task(self._run_embedding(job_id_str))
+        self._running_jobs[job_id_str] = task
+        task.add_done_callback(lambda _: self._running_jobs.pop(job_id_str, None))
 
         return job
 
@@ -123,9 +131,9 @@ class EmbeddingService:
                         embedding_str = "[" + ",".join(str(x) for x in embedding) + "]"
                         db.execute(
                             sql_text(
-                                "UPDATE document_chunks SET embedding = :emb::vector WHERE id = :id"
+                                "UPDATE document_chunks SET embedding = CAST(:emb AS vector) WHERE id = :id"
                             ),
-                            {"emb": embedding_str, "id": chunk_rec.id},
+                            {"emb": embedding_str, "id": str(chunk_rec.id)},
                         )
                         all_chunk_records.append(chunk_rec)
 
@@ -139,6 +147,7 @@ class EmbeddingService:
         except Exception as e:
             logger.exception("Embedding job %s failed", job_id)
             try:
+                db.rollback()
                 job = db.query(EmbeddingJob).get(job_id)
                 if job:
                     job.status = "failed"
@@ -158,9 +167,9 @@ class EmbeddingService:
         model: str,
         texts: list[str],
     ) -> list[list[float]]:
-        """Call OpenAI-compatible embedding API."""
-        base = base_url.rstrip("/")
-        url = base if base.endswith("/embeddings") else f"{base}/embeddings"
+        """Call OpenAI-compatible or Ollama native embedding API."""
+        from app.services import build_openai_url
+        url = build_openai_url(base_url, "/embeddings")
         payload = {
             "model": model,
             "input": texts,
@@ -170,11 +179,33 @@ class EmbeddingService:
             "Content-Type": "application/json",
         }
 
+        # Ollama native only supports single prompt — batch by calling one-by-one
+        is_ollama_native = "/api/embeddings" in url and "/v1/" not in url
+
+        if is_ollama_native:
+            results = []
+            for text in texts:
+                resp = await client.post(
+                    url,
+                    json={"model": model, "prompt": text},
+                    headers=headers,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                # Ollama returns {"embedding": [...]} or {"embeddings": [[...]]}
+                if "embedding" in data:
+                    results.append(data["embedding"])
+                elif "embeddings" in data:
+                    results.append(data["embeddings"][0])
+                else:
+                    raise ValueError(f"Unexpected Ollama response keys: {list(data.keys())}")
+            return results
+
         resp = await client.post(url, json=payload, headers=headers)
         resp.raise_for_status()
         data = resp.json()
 
-        # Sort by index to maintain order
+        # OpenAI format: sort by index to maintain order
         sorted_data = sorted(data["data"], key=lambda x: x["index"])
         return [item["embedding"] for item in sorted_data]
 

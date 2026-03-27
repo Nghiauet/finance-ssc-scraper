@@ -3,12 +3,12 @@ import secrets
 from base64 import b64decode
 
 from starlette.datastructures import Headers
-from starlette.responses import PlainTextResponse
+from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 
 # Paths that bypass authentication
-PUBLIC_PATHS = frozenset({"/api/auth/login"})
+PUBLIC_PATHS = frozenset({"/api/auth/login", "/api/health"})
 # Path prefixes that require authentication (API, docs)
 PROTECTED_PREFIXES = ("/api/", "/docs", "/openapi.json")
 
@@ -56,8 +56,8 @@ class BasicAuthMiddleware:
             await self.app(scope, receive, send)
             return
 
-        response = PlainTextResponse(
-            "Authentication required",
+        response = JSONResponse(
+            {"detail": "Authentication required"},
             status_code=401,
             headers={"WWW-Authenticate": f'Basic realm="{self.realm}"'},
         )

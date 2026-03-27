@@ -4,7 +4,7 @@ import httpx
 from sqlalchemy import func, text as sql_text
 from sqlalchemy.orm import Session
 
-from app.models import Document, DocumentChunk, LLMConfig, MarkdownContent
+from app.models import Company, Document, DocumentChunk, LLMConfig, MarkdownContent
 from app.services.crypto_service import decrypt_api_key
 
 logger = logging.getLogger(__name__)
@@ -31,7 +31,14 @@ class KnowledgeService:
                 .first()
             )
         if not embedding_config:
-            raise ValueError("No embedding LLM config found")
+            # Fall back to any embedding config if no default is set
+            embedding_config = (
+                db.query(LLMConfig)
+                .filter(LLMConfig.config_type == "embedding")
+                .first()
+            )
+        if not embedding_config:
+            raise ValueError("No embedding LLM config found. Create one in Settings.")
 
         # Get query embedding
         api_key = decrypt_api_key(embedding_config.api_key_encrypted)
@@ -39,33 +46,22 @@ class KnowledgeService:
             embedding_config.base_url, api_key, embedding_config.model_name, query
         )
 
-        # Build base filter conditions
-        conditions = []
-        params = {}
-        if ticker:
-            conditions.append("d.ticker = :ticker")
-            params["ticker"] = ticker
-        if year:
-            conditions.append("d.year = :year")
-            params["year"] = year
-        if report_type:
-            conditions.append("d.report_type = :report_type")
-            params["report_type"] = report_type
-        if report_period:
-            conditions.append("d.report_period = :report_period")
-            params["report_period"] = report_period
-
-        where_clause = " AND ".join(conditions) if conditions else "1=1"
-
+        # Build params — always pass all filter params (NULL means "no filter")
         embedding_str = "[" + ",".join(str(x) for x in query_embedding) + "]"
-        params["query_embedding"] = embedding_str
-        params["query_text"] = query
-        params["limit"] = min(limit, 50)
-        params["rrf_k"] = 60
+        params = {
+            "ticker": ticker or None,
+            "year": year or None,
+            "report_type": report_type or None,
+            "report_period": report_period or None,
+            "query_embedding": embedding_str,
+            "query_text": query,
+            "limit": min(limit, 50),
+            "rrf_k": 60,
+        }
 
         # Hybrid search with Reciprocal Rank Fusion (RRF)
-        # Combines vector similarity ranking and full-text search ranking
-        sql = sql_text(f"""
+        # Filters use (:param IS NULL OR col = :param) to avoid f-string SQL interpolation
+        sql = sql_text("""
             WITH vector_ranked AS (
                 SELECT
                     dc.id AS chunk_id,
@@ -74,12 +70,20 @@ class KnowledgeService:
                     dc.document_id,
                     d.ticker,
                     d.report_name,
-                    ROW_NUMBER() OVER (ORDER BY dc.embedding <=> :query_embedding::vector) AS vector_rank
+                    d.year,
+                    d.report_type,
+                    d.report_period,
+                    c.name AS company_name,
+                    ROW_NUMBER() OVER (ORDER BY dc.embedding <=> CAST(:query_embedding AS vector)) AS vector_rank
                 FROM document_chunks dc
                 JOIN documents d ON dc.document_id = d.id
-                WHERE {where_clause}
+                LEFT JOIN companies c ON d.company_id = c.id
+                WHERE (:ticker IS NULL OR d.ticker = :ticker)
+                  AND (:year IS NULL OR d.year = :year)
+                  AND (:report_type IS NULL OR d.report_type = :report_type)
+                  AND (:report_period IS NULL OR d.report_period = :report_period)
                   AND dc.embedding IS NOT NULL
-                ORDER BY dc.embedding <=> :query_embedding::vector
+                ORDER BY dc.embedding <=> CAST(:query_embedding AS vector)
                 LIMIT 100
             ),
             fulltext_ranked AS (
@@ -93,7 +97,10 @@ class KnowledgeService:
                     ) AS ft_rank
                 FROM document_chunks dc
                 JOIN documents d ON dc.document_id = d.id
-                WHERE {where_clause}
+                WHERE (:ticker IS NULL OR d.ticker = :ticker)
+                  AND (:year IS NULL OR d.year = :year)
+                  AND (:report_type IS NULL OR d.report_type = :report_type)
+                  AND (:report_period IS NULL OR d.report_period = :report_period)
                   AND to_tsvector('simple', dc.chunk_text) @@ plainto_tsquery('simple', :query_text)
                 LIMIT 100
             )
@@ -104,6 +111,10 @@ class KnowledgeService:
                 vr.document_id,
                 vr.ticker,
                 vr.report_name,
+                vr.year,
+                vr.report_type,
+                vr.report_period,
+                vr.company_name,
                 (1.0 / (:rrf_k + vr.vector_rank)) + COALESCE(1.0 / (:rrf_k + fr.ft_rank), 0) AS rrf_score
             FROM vector_ranked vr
             LEFT JOIN fulltext_ranked fr ON vr.chunk_id = fr.chunk_id
@@ -122,6 +133,10 @@ class KnowledgeService:
                 "report_name": row.report_name,
                 "section_heading": row.chunk_heading,
                 "score": float(row.rrf_score),
+                "year": row.year,
+                "report_type": row.report_type,
+                "report_period": row.report_period,
+                "company_name": row.company_name,
             }
             for row in rows
         ]
@@ -172,7 +187,19 @@ class KnowledgeService:
         # Build context from retrieved chunks
         context_parts = []
         for i, r in enumerate(results, 1):
-            source = f"[Source {i}: {r['ticker']} - {r['report_name']}"
+            ticker_label = r['ticker']
+            if r.get('company_name'):
+                ticker_label += f" ({r['company_name']})"
+            source = f"[Source {i}: {ticker_label} - {r['report_name']}"
+            meta_parts = []
+            if r.get('year'):
+                meta_parts.append(f"Year: {r['year']}")
+            if r.get('report_type'):
+                meta_parts.append(f"Type: {r['report_type']}")
+            if r.get('report_period'):
+                meta_parts.append(f"Period: {r['report_period']}")
+            if meta_parts:
+                source += f" | {', '.join(meta_parts)}"
             if r.get("section_heading"):
                 source += f" > {r['section_heading']}"
             source += "]"
@@ -189,11 +216,12 @@ class KnowledgeService:
         )
 
         # Call chat completion
-        base = chat_config.base_url.rstrip("/")
-        url = base if base.endswith("/chat/completions") else f"{base}/chat/completions"
+        from app.services import build_openai_url
+        url = build_openai_url(chat_config.base_url, "/chat/completions")
         payload = {
             "model": chat_config.model_name,
             "max_tokens": chat_config.max_tokens,
+            "stream": False,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {
@@ -223,19 +251,36 @@ class KnowledgeService:
         self, base_url: str, api_key: str, model: str, text: str
     ) -> list[float]:
         """Embed a single query text."""
-        base = base_url.rstrip("/")
-        url = base if base.endswith("/embeddings") else f"{base}/embeddings"
-        payload = {"model": model, "input": [text]}
+        from app.services import build_openai_url
+        url = build_openai_url(base_url, "/embeddings")
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
 
+        is_ollama_native = "/api/embeddings" in url and "/v1/" not in url
+
         async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(url, json=payload, headers=headers)
+            if is_ollama_native:
+                resp = await client.post(
+                    url, json={"model": model, "prompt": text}, headers=headers
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                if "embedding" in data:
+                    return data["embedding"]
+                elif "embeddings" in data:
+                    return data["embeddings"][0]
+                raise ValueError(f"Unexpected Ollama response keys: {list(data.keys())}")
+
+            resp = await client.post(
+                url, json={"model": model, "input": [text]}, headers=headers
+            )
             resp.raise_for_status()
             data = resp.json()
 
+        if not data.get("data"):
+            raise ValueError("Embedding API returned no data")
         return data["data"][0]["embedding"]
 
     def get_stats(self, db: Session) -> dict:

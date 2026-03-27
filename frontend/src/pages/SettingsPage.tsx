@@ -37,15 +37,19 @@ import {
   updateLLMConfig,
   deleteLLMConfig,
   testLLMConfig,
+  testLLMEndpoint,
 } from "@/api/llm-configs"
 import type { LLMConfig } from "@/types"
 import { toast } from "sonner"
+import { useDocumentTitle } from "@/hooks/use-document-title"
 
 export function SettingsPage() {
+  useDocumentTitle("Settings")
   const queryClient = useQueryClient()
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editingConfig, setEditingConfig] = useState<LLMConfig | null>(null)
   const [testingId, setTestingId] = useState<string | null>(null)
+  const [testingEndpoint, setTestingEndpoint] = useState(false)
 
   // Form state
   const [name, setName] = useState("")
@@ -54,6 +58,7 @@ export function SettingsPage() {
   const [apiKey, setApiKey] = useState("")
   const [maxTokens, setMaxTokens] = useState("4096")
   const [configType, setConfigType] = useState("vision")
+  const [embeddingDimension, setEmbeddingDimension] = useState("768")
   const [isDefault, setIsDefault] = useState(false)
 
   const { data: configs, isLoading } = useQuery({
@@ -99,6 +104,7 @@ export function SettingsPage() {
     setApiKey("")
     setMaxTokens("4096")
     setConfigType("vision")
+    setEmbeddingDimension("768")
     setIsDefault(false)
     setDialogOpen(true)
   }
@@ -111,6 +117,7 @@ export function SettingsPage() {
     setApiKey("")
     setMaxTokens(String(config.max_tokens))
     setConfigType(config.config_type)
+    setEmbeddingDimension(String(config.embedding_dimension || 768))
     setIsDefault(config.is_default)
     setDialogOpen(true)
   }
@@ -122,6 +129,7 @@ export function SettingsPage() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+    const dimValue = configType === "embedding" ? parseInt(embeddingDimension) : null
     if (editingConfig) {
       updateMutation.mutate({
         id: editingConfig.id,
@@ -132,6 +140,7 @@ export function SettingsPage() {
           api_key: apiKey || undefined,
           max_tokens: parseInt(maxTokens),
           config_type: configType,
+          embedding_dimension: dimValue,
           is_default: isDefault,
         },
       })
@@ -143,6 +152,7 @@ export function SettingsPage() {
         api_key: apiKey,
         max_tokens: parseInt(maxTokens),
         config_type: configType,
+        embedding_dimension: dimValue,
         is_default: isDefault,
       })
     }
@@ -161,6 +171,42 @@ export function SettingsPage() {
       toast.error(err instanceof Error ? err.message : "Test failed")
     } finally {
       setTestingId(null)
+    }
+  }
+
+  const handleTestEndpoint = async () => {
+    if (!baseUrl || !modelName || (!apiKey && !editingConfig)) {
+      toast.error("Fill in Base URL, Model Name, and API Key to test")
+      return
+    }
+    setTestingEndpoint(true)
+    try {
+      // For editing, if no new api_key provided, use a placeholder — backend needs the saved key
+      // So for edit without new key, fall back to the saved config test
+      if (editingConfig && !apiKey) {
+        const result = await testLLMConfig(editingConfig.id)
+        if (result.ok) {
+          toast.success(result.message)
+        } else {
+          toast.error(result.message)
+        }
+      } else {
+        const result = await testLLMEndpoint({
+          base_url: baseUrl,
+          model_name: modelName,
+          api_key: apiKey,
+          config_type: configType,
+        })
+        if (result.ok) {
+          toast.success(result.message)
+        } else {
+          toast.error(result.message)
+        }
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Test failed")
+    } finally {
+      setTestingEndpoint(false)
     }
   }
 
@@ -216,7 +262,12 @@ export function SettingsPage() {
                       {config.config_type}
                     </span>
                   </td>
-                  <td className="p-3 text-muted-foreground">{config.model_name}</td>
+                  <td className="p-3 text-muted-foreground">
+                    {config.model_name}
+                    {config.config_type === "embedding" && config.embedding_dimension && (
+                      <span className="ml-1.5 text-xs text-muted-foreground/60">({config.embedding_dimension}d)</span>
+                    )}
+                  </td>
                   <td className="max-w-[200px] truncate p-3 text-muted-foreground">{config.base_url}</td>
                   <td className="p-3">
                     {config.is_default && (
@@ -340,6 +391,22 @@ export function SettingsPage() {
                 onChange={(e) => setMaxTokens(e.target.value)}
               />
             </div>
+            {configType === "embedding" && (
+              <div className="space-y-1.5">
+                <Label htmlFor="cfg-dim">Embedding Dimension</Label>
+                <Input
+                  id="cfg-dim"
+                  type="number"
+                  min="64"
+                  max="8192"
+                  value={embeddingDimension}
+                  onChange={(e) => setEmbeddingDimension(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Must match the model output dimension. Changing this requires re-embedding all documents.
+                </p>
+              </div>
+            )}
             <div className="flex items-center gap-2">
               <Checkbox
                 id="cfg-default"
@@ -350,7 +417,21 @@ export function SettingsPage() {
                 Set as default for this type
               </Label>
             </div>
-            <DialogFooter>
+            <DialogFooter className="flex-col gap-2 sm:flex-row">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={handleTestEndpoint}
+                disabled={testingEndpoint}
+                className="sm:mr-auto"
+              >
+                {testingEndpoint ? (
+                  <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                ) : (
+                  <Zap className="mr-1.5 h-4 w-4" />
+                )}
+                Test Endpoint
+              </Button>
               <Button type="button" variant="outline" onClick={closeDialog}>
                 Cancel
               </Button>
