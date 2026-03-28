@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
 from app.models import ConversionJob, Document, MarkdownContent
@@ -85,8 +85,6 @@ async def create_conversion(data: ConversionJobCreate, db: Session = Depends(get
     try:
         job = llm_service.start_conversion(db, data.document_id, data.llm_config_id, resume=data.resume)
         return _enrich_job_response(job)
-    except RuntimeError as e:
-        raise HTTPException(429, str(e))
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -102,7 +100,7 @@ async def create_batch_conversion(data: BatchConversionCreate, db: Session = Dep
         try:
             job = llm_service.start_conversion(db, doc_id, data.llm_config_id)
             jobs.append(_enrich_job_response(job))
-        except (RuntimeError, ValueError) as e:
+        except ValueError as e:
             doc = db.query(Document).get(doc_id)
             errors.append(BatchConversionError(
                 document_id=doc_id,
@@ -110,8 +108,6 @@ async def create_batch_conversion(data: BatchConversionCreate, db: Session = Dep
                 report_name=doc.report_name if doc else None,
                 error=str(e),
             ).model_dump())
-            if isinstance(e, RuntimeError):
-                break  # Max concurrent reached, stop trying
 
     return {"jobs": jobs, "errors": errors}
 
@@ -159,15 +155,13 @@ async def create_batch_conversion_by_filter(
         try:
             job = llm_service.start_conversion(db, doc.id, data.llm_config_id)
             jobs.append(_enrich_job_response(job))
-        except (RuntimeError, ValueError) as e:
+        except ValueError as e:
             errors.append(BatchConversionError(
                 document_id=doc.id,
                 ticker=doc.ticker,
                 report_name=doc.report_name,
                 error=str(e),
             ).model_dump())
-            if isinstance(e, RuntimeError):
-                break  # Max concurrent reached
 
     return {
         "jobs_created": len(jobs),
@@ -351,31 +345,64 @@ async def batch_retry_conversions(
     resume: bool = Query(False),
     db: Session = Depends(get_db),
 ):
-    """Retry multiple failed conversion jobs."""
-    q = db.query(ConversionJob).filter(ConversionJob.status == "failed")
+    """Retry failed conversion jobs, deduplicating by document_id."""
+    active_doc_ids = set(
+        row[0] for row in db.query(ConversionJob.document_id)
+        .filter(ConversionJob.status.in_(["pending", "running"]))
+        .all()
+    )
+
+    q = (
+        db.query(ConversionJob)
+        .options(joinedload(ConversionJob.document))
+        .filter(ConversionJob.status == "failed")
+    )
     if data.job_ids:
         q = q.filter(ConversionJob.id.in_(data.job_ids))
 
-    failed_jobs = q.all()
+    failed_jobs = q.order_by(ConversionJob.created_at.desc()).all()
+
+    # Keep only the latest failed job per document; collect duplicates for deletion
+    latest_per_doc: dict[str, ConversionJob] = {}
+    ids_to_delete: list[str] = []
+    for job in failed_jobs:
+        if job.document_id not in latest_per_doc:
+            latest_per_doc[job.document_id] = job
+        else:
+            ids_to_delete.append(job.id)
+
+    # Skip documents that already have active jobs (leave their failed jobs intact)
+    retryable = {
+        doc_id: job for doc_id, job in latest_per_doc.items()
+        if doc_id not in active_doc_ids
+    }
+    skipped_count = len(latest_per_doc) - len(retryable)
+
     new_jobs = []
     errors = []
-    for old_job in failed_jobs:
+    for old_job in retryable.values():
         try:
             new_job = llm_service.start_conversion(
                 db, old_job.document_id, old_job.llm_config_id, resume=resume
             )
             new_jobs.append(_enrich_job_response(new_job))
-        except (RuntimeError, ValueError) as e:
+            ids_to_delete.append(old_job.id)
+        except ValueError as e:
             errors.append(BatchConversionError(
                 document_id=old_job.document_id,
                 ticker=old_job.document.ticker if old_job.document else None,
                 report_name=old_job.document.report_name if old_job.document else None,
                 error=str(e),
             ).model_dump())
-            if isinstance(e, RuntimeError):
-                break
 
-    return {"jobs": new_jobs, "errors": errors}
+    # Bulk-delete duplicates and successfully-retried old jobs
+    if ids_to_delete:
+        db.query(ConversionJob).filter(
+            ConversionJob.id.in_(ids_to_delete)
+        ).delete(synchronize_session="fetch")
+        db.commit()
+
+    return {"jobs": new_jobs, "errors": errors, "skipped_already_active": skipped_count}
 
 
 @router.get("/{job_id}", response_model=ConversionJobResponse)
@@ -403,9 +430,11 @@ async def retry_conversion(
         new_job = llm_service.start_conversion(
             db, old_job.document_id, old_job.llm_config_id, resume=resume
         )
-        return _enrich_job_response(new_job)
-    except RuntimeError as e:
-        raise HTTPException(429, str(e))
+        resp = _enrich_job_response(new_job)
+        # Delete old failed job now that retry is created
+        db.delete(old_job)
+        db.commit()
+        return resp
     except ValueError as e:
         raise HTTPException(400, str(e))
 
