@@ -219,6 +219,18 @@ export interface MarkdownContent {
   created_at: string
 }
 
+export interface StockGroup {
+  key: string
+  name: string
+  description: string
+  tickers: string[]
+  count: number
+}
+
+export interface StockGroupsResponse {
+  groups: StockGroup[]
+}
+
 export interface InsightSection {
   title: string
   content: string

@@ -14,6 +14,7 @@ import {
   deleteConversion,
   retryConversion,
   batchRetryConversions,
+  clearFailedConversions,
   getConversionStatusCounts,
 } from "@/api/conversions"
 import { formatDateTime, formatDuration } from "@/lib/format"
@@ -26,6 +27,8 @@ const PAGE_SIZE = 20
 const STATUS_FILTERS = [
   { key: "", label: "All", countKey: "all" as keyof ConversionStatusCounts },
   { key: "active", label: "Active", countKey: "active" as keyof ConversionStatusCounts },
+  { key: "running", label: "Running", countKey: "running" as keyof ConversionStatusCounts },
+  { key: "pending", label: "Pending", countKey: "pending" as keyof ConversionStatusCounts },
   { key: "completed", label: "Completed", countKey: "completed" as keyof ConversionStatusCounts },
   { key: "failed", label: "Failed", countKey: "failed" as keyof ConversionStatusCounts },
 ] as const
@@ -36,7 +39,7 @@ export function JobsTab() {
   const [page, setPage] = useState(1)
   const prevJobsRef = useRef<string>("")
 
-  // Map "active" filter to actual query params
+  // Map "active" filter to actual query params; "running" and "pending" are exact API values
   const statusParam = statusFilter === "active" ? undefined : (statusFilter || undefined)
 
   const { data: statusCounts } = useQuery({
@@ -136,6 +139,16 @@ export function JobsTab() {
     onError: (err: Error) => toast.error(err.message),
   })
 
+  const clearFailedMutation = useMutation({
+    mutationFn: clearFailedConversions,
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["conversions"] })
+      queryClient.invalidateQueries({ queryKey: ["conversion-status-counts"] })
+      toast.success(`${data.deleted} failed job${data.deleted !== 1 ? "s" : ""} cleared`)
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+
   // Reset page when filter changes
   useEffect(() => {
     setPage(1)
@@ -171,16 +184,34 @@ export function JobsTab() {
         })}
 
         {statusFilter === "failed" && statusCounts && statusCounts.failed > 0 && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => batchRetryMutation.mutate()}
-            disabled={batchRetryMutation.isPending}
-            className="ml-auto"
-          >
-            <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
-            Retry All Failed
-          </Button>
+          <div className="ml-auto flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => batchRetryMutation.mutate()}
+              disabled={batchRetryMutation.isPending}
+            >
+              <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+              Retry All Failed
+            </Button>
+            <ConfirmDialog
+              trigger={
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={clearFailedMutation.isPending}
+                  className="text-destructive hover:text-destructive"
+                >
+                  <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                  Clear All Failed
+                </Button>
+              }
+              title="Clear all failed jobs?"
+              description={`This will permanently delete ${statusCounts.failed} failed job${statusCounts.failed !== 1 ? "s" : ""}. Converted markdown will not be affected.`}
+              confirmLabel="Clear All"
+              onConfirm={() => clearFailedMutation.mutate()}
+            />
+          </div>
         )}
       </div>
 

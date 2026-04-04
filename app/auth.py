@@ -56,10 +56,19 @@ class BasicAuthMiddleware:
             await self.app(scope, receive, send)
             return
 
+        # Only send WWW-Authenticate: Basic when the request was NOT a Bearer
+        # token attempt.  Browsers intercept Basic challenges before fetch()
+        # can handle them, which causes a native credentials popup instead of
+        # letting the SPA redirect to /login.
+        resp_headers: dict[str, str] = {}
+        used_bearer = auth_header and auth_header.lower().startswith("bearer ")
+        if not used_bearer:
+            resp_headers["WWW-Authenticate"] = f'Basic realm="{self.realm}"'
+
         response = JSONResponse(
             {"detail": "Authentication required"},
             status_code=401,
-            headers={"WWW-Authenticate": f'Basic realm="{self.realm}"'},
+            headers=resp_headers,
         )
         await response(scope, receive, send)
 

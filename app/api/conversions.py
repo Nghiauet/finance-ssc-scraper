@@ -405,6 +405,18 @@ async def batch_retry_conversions(
     return {"jobs": new_jobs, "errors": errors, "skipped_already_active": skipped_count}
 
 
+@router.delete("/failed")
+def clear_failed_conversions(db: Session = Depends(get_db)):
+    """Delete all failed conversion jobs."""
+    count = (
+        db.query(ConversionJob)
+        .filter(ConversionJob.status == "failed")
+        .delete(synchronize_session="fetch")
+    )
+    db.commit()
+    return {"deleted": count}
+
+
 @router.get("/{job_id}", response_model=ConversionJobResponse)
 def get_conversion(job_id: str, db: Session = Depends(get_db)):
     job = db.query(ConversionJob).get(job_id)

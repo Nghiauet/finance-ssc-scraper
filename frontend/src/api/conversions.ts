@@ -8,6 +8,7 @@ import type {
   ConversionStatsResponse,
   ConvertedDocumentsResponse,
   MarkdownContent,
+  StockGroupsResponse,
 } from "@/types"
 
 export async function listConversions(params: {
@@ -108,6 +109,12 @@ export async function batchRetryConversions(jobIds?: string[], resume = false) {
   })
 }
 
+export async function clearFailedConversions() {
+  return apiFetch<{ deleted: number }>("/api/conversions/failed", {
+    method: "DELETE",
+  })
+}
+
 export async function getConversionStatusCounts() {
   return apiFetch<ConversionStatusCounts>("/api/conversions/status-counts")
 }
@@ -140,4 +147,8 @@ export async function deleteDocumentMarkdown(docId: string) {
   return apiFetch<{ ok: boolean }>(`/api/documents/${docId}/markdown`, {
     method: "DELETE",
   })
+}
+
+export async function getStockGroups() {
+  return apiFetch<StockGroupsResponse>("/api/stock-groups")
 }

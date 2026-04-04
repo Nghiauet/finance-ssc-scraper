@@ -10,6 +10,7 @@ from app.api.llm_configs import router as llm_configs_router
 from app.api.conversions import router as conversions_router
 from app.api.knowledge import router as knowledge_router
 from app.api.insights import router as insights_router
+from app.api.stock_groups import router as stock_groups_router
 
 api_router = APIRouter(prefix="/api")
 
@@ -23,3 +24,4 @@ api_router.include_router(llm_configs_router)
 api_router.include_router(conversions_router)
 api_router.include_router(knowledge_router)
 api_router.include_router(insights_router)
+api_router.include_router(stock_groups_router)

@@ -75,6 +75,7 @@ app/                        # FastAPI web application (entry point: ssc-api)
 ├── config.py               # pydantic-settings (env vars)
 ├── database.py             # SQLAlchemy engine/session (create_all, no Alembic)
 ├── auth.py                 # ASGI middleware: Basic Auth + Bearer JWT
+├── stock_groups.py         # Predefined stock index groups (VN30, etc.)
 ├── models/                 # SQLAlchemy ORM: Company, Document, File, ScrapeJob, LLMConfig, ConversionJob, MarkdownContent, DocumentChunk, EmbeddingJob
 ├── schemas/                # Pydantic request/response models
 ├── services/
@@ -95,7 +96,9 @@ app/                        # FastAPI web application (entry point: ssc-api)
     ├── scrape_jobs.py      # /api/scrape-jobs (CRUD)
     ├── llm_configs.py      # /api/llm-configs (CRUD + test connection)
     ├── conversions.py      # /api/conversions (single + batch PDF→markdown jobs)
-    └── knowledge.py        # /api/knowledge (search, ask, embed, stats)
+    ├── knowledge.py        # /api/knowledge (search, ask, embed, stats)
+    ├── insights.py         # /api/insights (RAG-generated company insights)
+    └── stock_groups.py     # /api/stock-groups (predefined index groups like VN30)
 
 frontend/                   # React SPA (Vite + TypeScript)
 ├── vite.config.ts          # Vite config: base="./", API proxy for dev
@@ -166,14 +169,17 @@ Multi-stage `Dockerfile.api`:
 ### Key patterns
 
 - Database schema created via `Base.metadata.create_all()` at startup — no Alembic migrations (alembic is a dependency but unused)
+- **Schema migrations**: `_ensure_schema_migrations()` in `app/main.py` runs raw SQL to ADD COLUMN for existing databases. When adding a new column to a model, also add an `IF NOT EXISTS` migration block there.
 - All models use UUID primary keys (via `Base` in `app/models/base.py`) for future merge with finance-chatbot-backend
 - Scrape jobs run as `asyncio.create_task` (max 1 concurrent, no Celery)
-- Conversion jobs and embedding jobs follow the same asyncio.create_task pattern with progress tracking
+- Conversion jobs use an internal queue: jobs exceeding `MAX_CONCURRENT_CONVERSIONS` stay `pending` and auto-start when a slot opens (`_process_queue`). Embedding jobs follow the simpler fire-or-reject pattern.
+- `cleanup_orphans` at startup: `running` jobs → marked failed (task lost); `pending` jobs → re-queued (not failed)
 - **LLM configs** stored in DB with Fernet-encrypted API keys (derived from JWT secret). Two types: `vision` (PDF→markdown) and `embedding` (chunking→vectors). Managed via Settings UI.
 - **pgvector**: `CREATE EXTENSION vector` run at startup in `_ensure_pgvector()`. Embedding column added dynamically to avoid import issues when extension isn't loaded.
 - **Hybrid search**: Knowledge service uses Reciprocal Rank Fusion (RRF) combining pgvector cosine distance and PostgreSQL `ts_rank` full-text search. Metadata pre-filtering (ticker, year, report_type) applied via SQL WHERE.
 - **Chunking**: Semantic chunking splits by markdown headings, preserves tables intact, uses ~800 token chunks with 100-token overlap. Token counting via tiktoken.
 - **Authentication**: ASGI middleware (`app/auth.py`) accepts both `Authorization: Basic` and `Authorization: Bearer <JWT>`. Only `/api/`, `/docs`, `/openapi.json` paths require auth — frontend SPA paths are public (React handles auth client-side via ProtectedRoute)
+- **Auth 401 header**: When a Bearer token fails, the 401 response must NOT include `WWW-Authenticate: Basic` — browsers intercept it and show a native credentials popup before `fetch()` can handle the response.
 - **JWT**: `POST /api/auth/login` validates against `.env` credentials and returns a JWT. Secret auto-derived from auth password if `JWT_SECRET_KEY` is empty.
 - MinIO has no host port; file downloads are proxied through the API via `app/services/file_stream.py`
 - **SPA serving**: `SPAStaticFiles` (custom `StaticFiles` subclass in `app/main.py`) serves `frontend_dist/` and falls back to `index.html` for client-side routing
@@ -229,4 +235,4 @@ Normalization (`normalize_report_name`) applies NFC, strips NBSP/zero-width char
 - Search inputs: `#pt9:it8112::content` (ticker), `#pt9:id1::content` (from date), `#pt9:id2::content` (to date)
 - Search button: `#pt9:b1 a[role="button"]`
 - Requires ~10s initial wait for ADF to render
-- Downloads: find `img[src*="download"]` → closest `<a>` → click triggers browser download event
+- Downloads: find data rows via `tr[role="row"]` → filter rows with ≥7 `<td>` cells → within each row find `img[src*="download"]` → closest `<a>` → click. Row-scoped to avoid index mismatch with global img list.

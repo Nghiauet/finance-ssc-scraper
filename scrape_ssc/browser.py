@@ -185,10 +185,14 @@ class SSCBrowser:
             async with self.page.expect_download(timeout=30_000) as dl_info:
                 await self.frame.evaluate("""
                     (i) => {
-                        const imgs = document.querySelectorAll('img[src*="download"]');
-                        if (i < imgs.length) {
-                            const a = imgs[i].closest('a');
-                            if (a) a.click();
+                        const trs = document.querySelectorAll('tr[role="row"]');
+                        const dataRows = [...trs].filter(tr => tr.querySelectorAll('td').length >= 7);
+                        if (i < dataRows.length) {
+                            const img = dataRows[i].querySelector('img[src*="download"]');
+                            if (img) {
+                                const a = img.closest('a');
+                                if (a) a.click();
+                            }
                         }
                     }
                 """, row_index)

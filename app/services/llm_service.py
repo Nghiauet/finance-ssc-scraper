@@ -25,6 +25,7 @@ CONVERSION_PROMPT = (
 class LLMService:
     def __init__(self):
         self._running_jobs: dict[str, asyncio.Task] = {}
+        self._processing_queue = False
 
     @property
     def active_count(self) -> int:
@@ -37,10 +38,6 @@ class LLMService:
         self, db, document_id: str, llm_config_id: str | None = None, resume: bool = False
     ) -> ConversionJob:
         from app.config import settings
-
-        max_concurrent = getattr(settings, "max_concurrent_conversions", 3)
-        if self.active_count >= max_concurrent:
-            raise RuntimeError("Maximum concurrent conversion jobs reached")
 
         doc = db.query(Document).get(document_id)
         if not doc:
@@ -79,16 +76,74 @@ class LLMService:
             document_id=document_id,
             llm_config_id=config.id,
             status="pending",
+            resume=resume,
         )
         db.add(job)
         db.commit()
         db.refresh(job)
 
-        task = asyncio.create_task(self._run_conversion(job.id, resume=resume))
-        self._running_jobs[job.id] = task
-        task.add_done_callback(lambda _: self._running_jobs.pop(job.id, None))
+        # Start immediately if under concurrency limit, otherwise queue
+        max_concurrent = settings.max_concurrent_conversions
+        if self.active_count < max_concurrent:
+            self._start_task(job.id, job.resume)
+        else:
+            logger.info(
+                "Conversion job %s queued (active: %d/%d)",
+                job.id, self.active_count, max_concurrent,
+            )
 
         return job
+
+    def _start_task(self, job_id: str, resume: bool = False):
+        """Start an asyncio task for a conversion job."""
+        task = asyncio.create_task(self._run_conversion(job_id, resume=resume))
+        self._running_jobs[job_id] = task
+        task.add_done_callback(lambda _: self._on_task_done(job_id))
+
+    def _on_task_done(self, job_id: str):
+        """Remove finished task and start next queued job."""
+        self._running_jobs.pop(job_id, None)
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._process_queue())
+        except RuntimeError:
+            logger.warning("No running event loop in _on_task_done for job %s", job_id)
+
+    async def _process_queue(self):
+        """Start pending conversion jobs if slots are available."""
+        from app.config import settings
+
+        max_concurrent = settings.max_concurrent_conversions
+        if self.active_count >= max_concurrent:
+            return
+
+        # Guard against concurrent _process_queue calls
+        if self._processing_queue:
+            return
+        self._processing_queue = True
+
+        db = SessionLocal()
+        try:
+            q = db.query(ConversionJob).filter(ConversionJob.status == "pending")
+            running_ids = list(self._running_jobs.keys())
+            if running_ids:
+                q = q.filter(~ConversionJob.id.in_(running_ids))
+            pending_jobs = (
+                q.order_by(ConversionJob.created_at.asc())
+                .limit(max_concurrent - self.active_count)
+                .all()
+            )
+            for job in pending_jobs:
+                if self.active_count >= max_concurrent:
+                    break
+                self._start_task(job.id, job.resume)
+                logger.info(
+                    "Dequeued conversion job %s (active: %d/%d)",
+                    job.id, self.active_count, max_concurrent,
+                )
+        finally:
+            self._processing_queue = False
+            db.close()
 
     PAGE_SEPARATOR = "\n\n---\n\n"
 
@@ -110,6 +165,12 @@ class LLMService:
             pdf_bytes = response.read()
             response.close()
             response.release_conn()
+
+            if not pdf_bytes:
+                raise ValueError(
+                    f"File '{file_rec.path}' is empty (0 bytes) in MinIO. "
+                    "Re-scrape the document with downloads enabled to fix."
+                )
 
             import fitz  # PyMuPDF
 
@@ -285,20 +346,39 @@ class LLMService:
         return content
 
     def cleanup_orphans(self, db):
-        """Mark unfinished conversion jobs as failed (e.g., after server restart)."""
-        from sqlalchemy import or_
+        """Handle unfinished conversion jobs after server restart.
 
-        orphans = (
+        Running jobs are truly orphaned (their asyncio task is gone) so mark
+        them as failed.  Pending jobs were queued and can be restarted, so
+        leave them as pending and schedule queue processing.
+        """
+        # Running jobs lost their task — mark failed
+        running = (
             db.query(ConversionJob)
-            .filter(or_(ConversionJob.status == "pending", ConversionJob.status == "running"))
+            .filter(ConversionJob.status == "running")
             .all()
         )
-        for job in orphans:
+        for job in running:
             job.status = "failed"
             job.error_message = "Server restarted while job was running"
             job.completed_at = datetime.now(timezone.utc)
-        if orphans:
+        if running:
             db.commit()
+            logger.info("Marked %d orphaned running jobs as failed", len(running))
+
+        # Pending jobs stay pending — schedule queue processing to pick them up
+        pending_count = (
+            db.query(ConversionJob)
+            .filter(ConversionJob.status == "pending")
+            .count()
+        )
+        if pending_count:
+            logger.info("Found %d pending queued jobs, will process after startup", pending_count)
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._process_queue())
+            except RuntimeError:
+                logger.warning("No running event loop during cleanup_orphans — pending jobs won't auto-start")
 
 
 llm_service = LLMService()

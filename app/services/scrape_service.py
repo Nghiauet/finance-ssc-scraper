@@ -281,6 +281,10 @@ class ScrapeService:
         content_type = minio_service.get_content_type(filename)
         file_size = os.path.getsize(file_path)
 
+        if file_size == 0:
+            logger.warning("Skipping empty file %s for %s", filename, ticker)
+            return
+
         minio_service.upload_file(object_name, file_path, content_type)
 
         file_rec = db.query(File).get(doc.file_id) if doc.file_id else None

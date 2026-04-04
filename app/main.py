@@ -67,6 +67,12 @@ def _ensure_schema_migrations(eng):
                 ) THEN
                     ALTER TABLE llm_configs ADD COLUMN embedding_dimension INTEGER;
                 END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'conversion_jobs' AND column_name = 'resume'
+                ) THEN
+                    ALTER TABLE conversion_jobs ADD COLUMN resume BOOLEAN DEFAULT FALSE;
+                END IF;
             END $$;
         """))
         conn.commit()
