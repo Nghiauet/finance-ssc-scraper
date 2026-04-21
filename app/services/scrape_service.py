@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import re
 import shutil
@@ -15,6 +16,8 @@ from app.database import SessionLocal
 from app.models import Company, Document, File, ScrapeJob
 from app.schemas.scrape_job import ScrapeJobCreate
 from app.services.minio_service import minio_service
+
+logger = logging.getLogger(__name__)
 
 
 def normalize_report_name(report_name: str | None) -> str:
