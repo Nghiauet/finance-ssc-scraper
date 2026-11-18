@@ -36,10 +36,10 @@ docker compose up -d                            # start postgres + minio + api
 docker compose up -d --build                    # rebuild and start
 docker compose --profile debug up -d            # + MinIO console on :9003
 docker compose down                             # stop all
-docker compose down -v                          # stop + delete volumes
+docker compose down -v                          # stop + DELETE the dataset (scrape-ssc_pgdata embeddings + scrape-ssc_minio_data, ~76 GB of PDFs); neither is backed up
 
 # Docker CLI scraper (separate profile)
-docker compose run --profile cli scraper --ticker VNM
+docker compose --profile cli run --rm scraper --ticker VNM
 
 # Web application (local dev — backend only, no frontend)
 uv run ssc-api                                  # http://localhost:8000
